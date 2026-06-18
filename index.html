@@ -1045,6 +1045,48 @@ window.saveOwner = async function() {
   closeModal('modal-new-owner');
 };
 
+window.confirmDeleteOwner = async function(ownerId) {
+  const o = allOwners[ownerId]; if(!o) return;
+
+  // 檢查有沒有進行中的刮板
+  const activeProds = Object.values(allProducts).filter(p=>
+    p.ownerId===ownerId && p.status==='active' && !p.deleted
+  );
+
+  const msg = activeProds.length > 0
+    ? `確定要刪除格主「${o.name}」（${(o.cells||[]).join('、')}）？
+
+⚠️ 此格主有 ${activeProds.length} 張進行中刮板，將自動廢套觸發結算。
+
+此操作無法復原！`
+    : `確定要刪除格主「${o.name}」（${(o.cells||[]).join('、')}）？
+
+此操作無法復原！`;
+
+  if(!confirm(msg)) return;
+
+  showToast('⏳ 正在處理退租...');
+
+  // 1. 進行中刮板全部廢套
+  for(const prod of activeProds) {
+    const boardTxs = allTxs.filter(tx=>tx.productId===prod.id);
+    const confirmedAmt = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    await updateDoc(doc(db,'products',prod.id),{
+      status:'scrapped', completedAt:serverTimestamp(),
+      finalAmount:confirmedAmt, discountReason:'[格主退租廢套]'
+    });
+    const confirmedTxs = boardTxs.filter(tx=>tx.paymentStatus==='confirmed');
+    await Promise.all(confirmedTxs.map(tx=>updateDoc(doc(db,'transactions',tx.id),{
+      batchCompleted:true, finalAmount:confirmedAmt, completedAt:serverTimestamp()
+    })));
+  }
+
+  // 2. 刪除格主
+  await deleteDoc(doc(db,'owners',ownerId));
+
+  showToast('✅ 格主已退租，進行中刮板已廢套結算');
+};
+
 window.editOwner = async function(ownerId) {
   const o = allOwners[ownerId]; if(!o) return;
   document.getElementById('owner-modal-title').textContent = '✏️ 編輯格主';
@@ -1068,13 +1110,23 @@ function renderOwnersList() {
     return `<div class="owner-card">
       <div class="owner-card-header">
         <div><div style="font-size:16px;font-weight:700;">${o.name}</div><div style="font-size:12px;color:var(--text2);margin-top:4px;">手續費 ${o.feeRate}%・每月 ${o.settleDay} 號結帳</div></div>
-        <button class="btn btn-secondary btn-sm" onclick="editOwner('${o.id}')">✏️ 編輯</button>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-secondary btn-sm" data-edit-oid="${o.id}">✏️ 編輯</button>
+          <button class="btn btn-danger btn-sm" data-delete-oid="${o.id}">🗑️ 退租</button>
+        </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
         ${cells.length?cells.map(c=>`<span class="cell-chip">${c}</span>`).join(''):'<span style="font-size:12px;color:var(--text3);">尚未建立格子</span>'}
       </div>
     </div>`;
   }).join('');
+  // 綁定事件
+  el.querySelectorAll('[data-edit-oid]').forEach(btn=>{
+    btn.addEventListener('click', ()=>editOwner(btn.dataset.editOid));
+  });
+  el.querySelectorAll('[data-delete-oid]').forEach(btn=>{
+    btn.addEventListener('click', ()=>confirmDeleteOwner(btn.dataset.deleteOid));
+  });
 }
 
 function populateCellSelects() {
