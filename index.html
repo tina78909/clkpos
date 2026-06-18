@@ -1485,6 +1485,29 @@ window.lookupBarcode = async function() {
   const barcode=document.getElementById('manual-barcode').value.trim(); if(!barcode) return;
   const found=Object.values(allProducts).find(p=>p.barcode===barcode);
   if(!found){showToast('⚠️ 條碼未啟用，請建立商品');openNewProductModal(barcode);return;}
+
+  // 狀態檢查：已完刮/廢套/下架不允許登帳
+  if(found.status==='completed'){
+    showToast('🏁 此刮板已完刮出貨，無法再登帳');
+    document.getElementById('manual-barcode').value='';
+    return;
+  }
+  if(found.status==='scrapped'){
+    showToast('🗑️ 此刮板已廢套，無法再登帳');
+    document.getElementById('manual-barcode').value='';
+    return;
+  }
+  if(found.status==='offline'){
+    showToast('⏸ 此商品已下架，無法登帳');
+    document.getElementById('manual-barcode').value='';
+    return;
+  }
+  if(found.deleted){
+    showToast('⚠️ 此商品已被隱藏，無法登帳');
+    document.getElementById('manual-barcode').value='';
+    return;
+  }
+
   currentProduct={...found};
   displayFoundProduct();
 };
