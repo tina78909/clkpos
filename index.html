@@ -388,6 +388,10 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
         <div style="font-size:13px;color:var(--text2);">管理格主與所屬格子</div>
         <button class="btn btn-primary btn-sm" onclick="openNewOwnerModal()">＋ 新增格主</button>
       </div>
+      <div class="tab-group">
+        <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
+        <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+      </div>
       <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
     </div>
 
@@ -1048,20 +1052,15 @@ window.saveOwner = async function() {
 window.confirmDeleteOwner = async function(ownerId) {
   const o = allOwners[ownerId]; if(!o) return;
 
-  // 檢查有沒有進行中的刮板
   const activeProds = Object.values(allProducts).filter(p=>
     p.ownerId===ownerId && p.status==='active' && !p.deleted
   );
 
   const msg = activeProds.length > 0
-    ? `確定要刪除格主「${o.name}」（${(o.cells||[]).join('、')}）？
+    ? `確定要將格主「${o.name}」（${(o.cells||[]).join('、')}）標記為退租？
 
-⚠️ 此格主有 ${activeProds.length} 張進行中刮板，將自動廢套觸發結算。
-
-此操作無法復原！`
-    : `確定要刪除格主「${o.name}」（${(o.cells||[]).join('、')}）？
-
-此操作無法復原！`;
+⚠️ 此格主有 ${activeProds.length} 張進行中刮板，將自動廢套觸發結算。`
+    : `確定要將格主「${o.name}」（${(o.cells||[]).join('、')}）標記為退租？`;
 
   if(!confirm(msg)) return;
 
@@ -1081,10 +1080,30 @@ window.confirmDeleteOwner = async function(ownerId) {
     })));
   }
 
-  // 2. 刪除格主
-  await deleteDoc(doc(db,'owners',ownerId));
+  // 2. 標記退租（不刪除資料，保留歷史）
+  await updateDoc(doc(db,'owners',ownerId),{
+    inactive:true, inactiveAt:serverTimestamp()
+  });
 
   showToast('✅ 格主已退租，進行中刮板已廢套結算');
+};
+
+window.reactivateOwner = async function(ownerId) {
+  const o = allOwners[ownerId]; if(!o) return;
+  if(!confirm(`確定要將格主「${o.name}」恢復為現有格主？`)) return;
+  await updateDoc(doc(db,'owners',ownerId),{
+    inactive:false, reactivatedAt:serverTimestamp()
+  });
+  showToast('✅ 格主已恢復！');
+};
+
+let ownerTab = 'active';
+
+window.switchOwnerTab = function(tab, el) {
+  ownerTab = tab;
+  document.querySelectorAll('#page-owners .tab-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderOwnersList();
 };
 
 window.editOwner = async function(ownerId) {
@@ -1103,29 +1122,47 @@ window.editOwner = async function(ownerId) {
 
 function renderOwnersList() {
   const el = document.getElementById('owners-list');
-  const owners = Object.values(allOwners);
-  if(owners.length===0){el.innerHTML='<div class="empty-state"><div class="icon">🏪</div><p>尚無格主，點右上角新增</p></div>';return;}
+  const allOwnerList = Object.values(allOwners);
+  const isInactiveTab = ownerTab === 'inactive';
+  const owners = allOwnerList.filter(o => isInactiveTab ? o.inactive : !o.inactive);
+
+  if(owners.length===0){
+    el.innerHTML = isInactiveTab
+      ? '<div class="empty-state"><div class="icon">👋</div><p>尚無退租格主</p></div>'
+      : '<div class="empty-state"><div class="icon">🏪</div><p>尚無格主，點右上角新增</p></div>';
+    return;
+  }
+
   el.innerHTML = owners.map(o=>{
     const cells = (o.cells||[]);
-    return `<div class="owner-card">
+    const inactiveDate = o.inactiveAt ? (o.inactiveAt.toDate?o.inactiveAt.toDate():new Date(o.inactiveAt)).toLocaleDateString('zh-TW') : '';
+    const btns = isInactiveTab
+      ? `<button class="btn btn-success btn-sm" data-reactivate-oid="${o.id}">▶ 續租</button>`
+      : `<button class="btn btn-secondary btn-sm" data-edit-oid="${o.id}">✏️ 編輯</button>
+         <button class="btn btn-danger btn-sm" data-delete-oid="${o.id}">🗑️ 退租</button>`;
+    return `<div class="owner-card" style="${isInactiveTab?'opacity:0.7;':''}">
       <div class="owner-card-header">
-        <div><div style="font-size:16px;font-weight:700;">${o.name}</div><div style="font-size:12px;color:var(--text2);margin-top:4px;">手續費 ${o.feeRate}%・每月 ${o.settleDay} 號結帳</div></div>
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-secondary btn-sm" data-edit-oid="${o.id}">✏️ 編輯</button>
-          <button class="btn btn-danger btn-sm" data-delete-oid="${o.id}">🗑️ 退租</button>
+        <div>
+          <div style="font-size:16px;font-weight:700;">${o.name}${isInactiveTab?' <span style="font-size:11px;color:var(--danger);">已退租</span>':''}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">手續費 ${o.feeRate}%・每月 ${o.settleDay} 號結帳${inactiveDate?' · 退租日：'+inactiveDate:''}</div>
         </div>
+        <div style="display:flex;gap:6px;">${btns}</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
-        ${cells.length?cells.map(c=>`<span class="cell-chip">${c}</span>`).join(''):'<span style="font-size:12px;color:var(--text3);">尚未建立格子</span>'}
+        ${cells.length?cells.map(c=>`<span class="cell-chip">${c}</span>`).join(''):'<span style="font-size:12px;color:var(--text3);">尚無格子</span>'}
       </div>
     </div>`;
   }).join('');
+
   // 綁定事件
   el.querySelectorAll('[data-edit-oid]').forEach(btn=>{
     btn.addEventListener('click', ()=>editOwner(btn.dataset.editOid));
   });
   el.querySelectorAll('[data-delete-oid]').forEach(btn=>{
     btn.addEventListener('click', ()=>confirmDeleteOwner(btn.dataset.deleteOid));
+  });
+  el.querySelectorAll('[data-reactivate-oid]').forEach(btn=>{
+    btn.addEventListener('click', ()=>reactivateOwner(btn.dataset.reactivateOid));
   });
 }
 
@@ -1136,7 +1173,7 @@ function populateCellSelects() {
     const el=document.getElementById(id); if(el) el.innerHTML=cellHtml||'<option value="">（請先新增格主與格子）</option>';
   });
   // 格主篩選下拉（商品管理 + 快速選品）
-  const owners = Object.values(allOwners);
+  const owners = Object.values(allOwners).filter(o=>!o.inactive); // 只顯示現有格主
   const ownerHtml = '<option value="">所有格主／店內</option>'
     + '<option value="__store__">店內商品</option>'
     + owners.map(o=>`<option value="${o.id}">${o.name}（${(o.cells||[]).join('、')}）</option>`).join('');
