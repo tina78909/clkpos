@@ -2534,7 +2534,7 @@ window.generateAndPrint = async function() {
   // 動態載入 QRCode 套件
   await loadLabelScript('https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js');
 
-  const startNum = parseInt(startStr.replace(/\D/g,''));
+  const startNum = parseInt(startStr.replace(/[^0-9]/g,''));
   const padLen   = startStr.length;
   currentLabelData = [];
   for(let i=0; i<count; i++){
