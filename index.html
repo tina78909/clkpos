@@ -517,6 +517,43 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     </div>
 
     S -->
+    <!-- PRINT -->
+    <div id="page-print" class="page">
+      <div class="section-title">🖨️ 條碼列印</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">⚙️ 列印設定</div></div>
+        <div class="field-group">
+          <label class="field-label">選擇格子</label>
+          <select id="print-cell-select" style="width:100%;"></select>
+        </div>
+        <div id="print-prefix-info" class="alert alert-info hidden"></div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">起始號碼</label>
+            <input type="number" id="print-start-num" value="1" min="1">
+          </div>
+          <div class="field-group">
+            <label class="field-label">列印數量</label>
+            <input type="number" id="print-qty" value="10" min="1" max="200">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">流水號位數</label>
+          <select id="print-digits">
+            <option value="5">5位數（如 A01-00001）</option>
+            <option value="8" selected>8位數（如 A01-00000001）</option>
+            <option value="10">10位數（如 A01-0000000001）</option>
+          </select>
+        </div>
+        <div id="print-sample" class="alert alert-info mt-8" style="font-family:monospace;font-size:13px;"></div>
+        <button class="btn btn-success btn-full mt-8" id="print-generate-btn">⬇️ 生成並下載 PDF</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">📋 各格子列印紀錄</div></div>
+        <div id="print-records-list"><div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div></div>
+      </div>
+    </div>
+
     <div id="page-boss" class="page">
       <div class="section-title">👑 老闆專區 <span class="sub">待核帳管理</span></div>
       <div class="card">
@@ -546,6 +583,9 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     </button>
     <button class="bottomnav-item" onclick="switchPage('report',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>報表</span>
+    </button>
+    <button class="bottomnav-item" onclick="switchPage('print',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg><span>列印</span>
     </button>
     <button class="bottomnav-item" id="boss-nav-btn" onclick="switchPage('boss',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21,13.89 7,23 12,20 17,23 15.79,13.88"/></svg><span>老闆</span>
@@ -876,6 +916,7 @@ window.switchPage = function(page, el) {
   el.classList.add('active');
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
+  if(page==='print') initPrintPage();
 };
 window.switchToPick = function() {
   dashboardMode = 'pick';
@@ -2734,6 +2775,138 @@ function loadLabelScript(src) {
     document.head.appendChild(s);
   });
 }
+
+// ===== 列印功能 =====
+window.initPrintPage = function() {
+  const sel = document.getElementById('print-cell-select');
+  if(!sel) return;
+  const cells = getAllCells().filter(c => !allOwners[c.ownerId]?.inactive);
+  sel.innerHTML = '<option value="">請選擇格子...</option>'
+    + cells.map(c=>`<option value="${c.cellId}" data-oid="${c.ownerId}">${c.cellId}（${c.ownerName}）</option>`).join('');
+  sel.onchange = window.onPrintCellChange;
+  document.getElementById('print-start-num').oninput = window.updatePrintPreview;
+  document.getElementById('print-qty').oninput = window.updatePrintPreview;
+  document.getElementById('print-digits').onchange = window.updatePrintPreview;
+  document.getElementById('print-generate-btn').onclick = window.generateBarcodePDF;
+  renderPrintRecords();
+};
+
+window.onPrintCellChange = function() {
+  const cellId = document.getElementById('print-cell-select').value;
+  if(!cellId){ document.getElementById('print-prefix-info').classList.add('hidden'); return; }
+  const owner = getOwnerByCell(cellId);
+  const rec = (owner?.printRecords||{})[cellId] || {lastNum:0};
+  const infoEl = document.getElementById('print-prefix-info');
+  infoEl.classList.remove('hidden');
+  infoEl.innerHTML = `格子 <strong>${cellId}</strong>・格主：${owner?.name||''}・上次印到 <strong>${rec.lastNum}</strong> 號，建議從 <strong>${rec.lastNum+1}</strong> 開始`;
+  document.getElementById('print-start-num').value = rec.lastNum + 1;
+  window.updatePrintPreview();
+};
+
+window.updatePrintPreview = function() {
+  const cellId   = document.getElementById('print-cell-select').value;
+  const startNum = parseInt(document.getElementById('print-start-num').value)||1;
+  const qty      = parseInt(document.getElementById('print-qty').value)||1;
+  const digits   = parseInt(document.getElementById('print-digits').value)||8;
+  const el = document.getElementById('print-sample');
+  if(!cellId){ el.textContent=''; return; }
+  const first = cellId+'-'+String(startNum).padStart(digits,'0');
+  const last  = cellId+'-'+String(startNum+qty-1).padStart(digits,'0');
+  el.innerHTML = `預覽：<strong>${first}</strong> ～ <strong>${last}</strong>（共 ${qty} 張）`;
+};
+
+window.generateBarcodePDF = async function() {
+  const cellId   = document.getElementById('print-cell-select').value;
+  const startNum = parseInt(document.getElementById('print-start-num').value)||1;
+  const qty      = parseInt(document.getElementById('print-qty').value)||1;
+  const digits   = parseInt(document.getElementById('print-digits').value)||8;
+  if(!cellId){ showToast('請先選擇格子'); return; }
+  if(qty<1||qty>200){ showToast('數量需在 1~200 之間'); return; }
+  showToast('⏳ 正在生成 PDF...');
+
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+
+  const { jsPDF } = window.jspdf;
+  const labelW=38, labelH=30, cols=4, rows=8, perPage=cols*rows;
+  const marginX=10, marginY=10, gapX=4, gapY=4;
+  const pdfDoc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+
+  const qrDiv = document.createElement('div');
+  qrDiv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(qrDiv);
+
+  for(let i=0;i<qty;i++) {
+    const num  = startNum + i;
+    const code = cellId + '-' + String(num).padStart(digits,'0');
+    const posInPage = i % perPage;
+    if(i>0 && posInPage===0) pdfDoc.addPage();
+    const col = posInPage % cols;
+    const row = Math.floor(posInPage / cols);
+    const x = marginX + col*(labelW+gapX);
+    const y = marginY + row*(labelH+gapY);
+
+    qrDiv.innerHTML = '';
+    await new Promise(res=>{
+      new QRCode(qrDiv,{text:code,width:128,height:128,correctLevel:QRCode.CorrectLevel.M});
+      setTimeout(res,60);
+    });
+    const canvas = qrDiv.querySelector('canvas');
+    if(canvas) {
+      const imgData = canvas.toDataURL('image/png');
+      const qrSize = labelW - 4;
+      pdfDoc.addImage(imgData,'PNG', x+2, y+1, qrSize, qrSize);
+    }
+    pdfDoc.setFontSize(5.5);
+    pdfDoc.setFont('helvetica','bold');
+    pdfDoc.text(code, x+labelW/2, y+labelH-2, {align:'center'});
+  }
+  document.body.removeChild(qrDiv);
+
+  // 更新列印紀錄
+  const owner = getOwnerByCell(cellId);
+  if(owner) {
+    const records = JSON.parse(JSON.stringify(owner.printRecords||{}));
+    records[cellId] = {
+      lastNum: startNum+qty-1,
+      lastPrintAt: new Date().toISOString(),
+      totalPrinted: (records[cellId]?.totalPrinted||0)+qty
+    };
+    await updateDoc(doc(db,'owners',owner.id),{printRecords:records});
+  }
+
+  const fname = 'CLK-條碼-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf';
+  pdfDoc.save(fname);
+  showToast('✅ PDF 已下載，共 '+qty+' 張條碼');
+  renderPrintRecords();
+};
+
+function renderPrintRecords() {
+  const el = document.getElementById('print-records-list');
+  if(!el) return;
+  const rows = [];
+  getAllCells().forEach(c=>{
+    const owner = allOwners[c.ownerId];
+    if(owner?.inactive) return;
+    const rec = (owner?.printRecords||{})[c.cellId];
+    if(rec) rows.push({cellId:c.cellId, ownerName:c.ownerName, ...rec});
+  });
+  if(rows.length===0){
+    el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div>';
+    return;
+  }
+  el.innerHTML = rows.map(r=>{
+    const dt = r.lastPrintAt ? new Date(r.lastPrintAt).toLocaleDateString('zh-TW') : '';
+    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-weight:600;">${r.cellId} <span style="font-size:12px;color:var(--text2);">${r.ownerName}</span></div>
+        <div style="font-size:12px;color:var(--text2);">最後印到 <strong>${r.lastNum}</strong> 號・${dt}・累計 ${r.totalPrinted} 張</div>
+      </div>
+      <div style="font-size:13px;color:var(--accent);">下次從 <strong>${r.lastNum+1}</strong> 開始</div>
+    </div>`;
+  }).join('');
+}
+
 
 let toastTimer;
 window.showToast = function(msg,dur=2500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
