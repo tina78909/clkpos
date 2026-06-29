@@ -883,7 +883,7 @@ function setupRealtimeListeners() {
   onSnapshot(collection(db,'owners'), snap => {
     snap.forEach(d => { allOwners[d.id]={id:d.id,...d.data()}; });
     renderOwnersList(); populateCellSelects();
-    if(isBoss)   });
+  });
 }
 
 async function loadOwners() {
