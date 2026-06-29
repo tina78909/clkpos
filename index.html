@@ -1109,7 +1109,6 @@ window.openNewOwnerModal = function() {
   document.getElementById('editing-owner-id').value = '';
   document.getElementById('owner-name').value='';
   document.getElementById('owner-fee').value='10';
-  document.getElementById('owner-barcode-total').value='50';
   document.getElementById('owner-settle-day').value='1';
   pendingCells=[];
   renderCellsList();
@@ -1218,7 +1217,6 @@ window.editOwner = async function(ownerId) {
   document.getElementById('owner-name').value = o.name||'';
   document.getElementById('owner-fee').value = o.feeRate||10;
   document.getElementById('owner-settle-day').value = o.settleDay||1;
-  document.getElementById('owner-barcode-total').value = o.barcodeTotal||50;
   pendingCells = [...(o.cells||[])];
   renderCellsList();
   openModal('modal-new-owner');
