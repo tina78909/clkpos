@@ -527,8 +527,8 @@ select option{background:var(--surface2);}
           <label class="field-label">流水號位數</label>
           <select id="print-digits">
             <option value="5">5位數（如 A01-00001）</option>
-            <option value="8" selected>8位數（如 A01-00000001）</option>
-            <option value="10">10位數（如 A01-0000000001）</option>
+            <option value="8">8位數（如 A01-00000001）</option>
+            <option value="10" selected>10位數（如 A01-0000000001）</option>
           </select>
         </div>
         <div id="print-sample" class="alert alert-info mt-8" style="font-family:monospace;font-size:13px;"></div>
@@ -596,11 +596,7 @@ select option{background:var(--surface2);}
       <label class="field-label">結帳日</label>
       <select id="owner-settle-day"><option value="1">每月 1 號</option><option value="15">每月 15 號</option></select>
     </div>
-    <div class="field-group">
-      <label class="field-label">條碼前綴（格主專屬，如 A15）</label>
-      <input type="text" id="owner-barcode-prefix" placeholder="A15">
-    </div>
-    <div class="field-group"><label class="field-label">發放條碼總數量</label><input type="number" id="owner-barcode-total" value="50" min="1"></div>
+
     <hr class="divider">
     <!-- 格子管理 -->
     <div class="field-group">
@@ -623,7 +619,7 @@ select option{background:var(--surface2);}
   <div class="modal">
     <div class="modal-header"><div class="modal-title" id="new-product-modal-title">📦 新增商品</div><button class="modal-close" onclick="closeModal('modal-new-product')">✕</button></div>
     <input type="hidden" id="editing-product-id">
-    <div class="field-group"><label class="field-label">條碼編號</label><input type="text" id="product-barcode" placeholder="A150001"></div>
+    <div class="field-group"><label class="field-label">條碼編號 <span style="color:var(--text3);font-size:11px;">（無條碼商品可留空）</span></label><input type="text" id="product-barcode" placeholder="A150001（選填）"></div>
     <div class="field-group"><label class="field-label">商品名稱</label><input type="text" id="product-name" placeholder="例：火影忍者第三彈"></div>
     <div class="form-row">
       <div class="field-group">
@@ -1111,7 +1107,7 @@ function getAllCells() {
 window.openNewOwnerModal = function() {
   document.getElementById('owner-modal-title').textContent = '🏪 新增格主';
   document.getElementById('editing-owner-id').value = '';
-  ['owner-name','owner-barcode-prefix'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('owner-name').value='';
   document.getElementById('owner-fee').value='10';
   document.getElementById('owner-barcode-total').value='50';
   document.getElementById('owner-settle-day').value='1';
@@ -1144,11 +1140,10 @@ window.saveOwner = async function() {
   const name    = document.getElementById('owner-name').value.trim();
   const feeRate = parseInt(document.getElementById('owner-fee').value);
   const settleDay = parseInt(document.getElementById('owner-settle-day').value);
-  const prefix  = document.getElementById('owner-barcode-prefix').value.trim();
-  const barcodeTotal = parseInt(document.getElementById('owner-barcode-total').value);
+  const barcodeTotal = parseInt(document.getElementById('owner-barcode-total')?.value||50);
   if(!name){showToast('請填寫格主名稱');return;}
 
-  const data = {name, feeRate, settleDay, barcodePrefix:prefix, barcodeTotal, cells:pendingCells};
+  const data = {name, feeRate, settleDay, barcodeTotal, cells:pendingCells};
   if(editId) {
     await updateDoc(doc(db,'owners',editId), data);
     showToast('✅ 格主已更新');
@@ -1223,7 +1218,6 @@ window.editOwner = async function(ownerId) {
   document.getElementById('owner-name').value = o.name||'';
   document.getElementById('owner-fee').value = o.feeRate||10;
   document.getElementById('owner-settle-day').value = o.settleDay||1;
-  document.getElementById('owner-barcode-prefix').value = o.barcodePrefix||'';
   document.getElementById('owner-barcode-total').value = o.barcodeTotal||50;
   pendingCells = [...(o.cells||[])];
   renderCellsList();
@@ -1347,7 +1341,7 @@ window.saveProduct = async function() {
   const cellId   = document.getElementById('product-cell-id').value;
   const totalDraws = parseInt(document.getElementById('product-total-draws').value);
   const unitPrice  = parseFloat(document.getElementById('product-unit-price').value);
-  if(!barcode||!name||!unitPrice){showToast('請填寫必要欄位');return;}
+  if(!name||!unitPrice){showToast('請填寫商品名稱和單價');return;}
 
   const tiers=[];
   document.querySelectorAll('#price-tiers .tier-row').forEach(row=>{
@@ -1363,8 +1357,9 @@ window.saveProduct = async function() {
   const isBlindbox = type === 'blindbox';
   const productType = (type==='owner') ? 'owner' : 'store'; // 統一 store/owner
   const subType = isBlindbox ? 'blindbox' : 'lottery'; // 細分類型
+  const finalBarcode = barcode || ('NOCODE-'+Date.now());
   const data={
-    barcode, name,
+    barcode: finalBarcode, name,
     type: productType, subType,
     cellId: type==='owner' ? cellId : null,
     ownerId: owner ? owner.id : null,
