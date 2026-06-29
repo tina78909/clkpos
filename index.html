@@ -2303,6 +2303,140 @@ window.renderSettlementBoard = function() {
   }, 0);
 };
 
+window.downloadReport = async function() {
+  const year  = parseInt(document.getElementById('report-year')?.value || new Date().getFullYear());
+  const month = parseInt(document.getElementById('report-month-only')?.value || (new Date().getMonth()+1));
+  const monthStr = year+'-'+String(month).padStart(2,'0');
+  const start = new Date(year, month-1, 1);
+  const end   = new Date(year, month, 1);
+
+  showToast('⏳ 正在抓取最新資料...');
+  const [prodSnap, txSnap] = await Promise.all([
+    getDocs(collection(db,'products')),
+    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
+  ]);
+  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
+  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
+
+  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+  const wb = XLSX.utils.book_new();
+
+  const completedThisMonth = Object.values(allProducts).filter(p => {
+    if(!p.completedAt || p.deleted) return false;
+    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
+    return ct >= start && ct < end && (p.status==='completed' || p.status==='scrapped');
+  });
+
+  const boardSettlements = [];
+  for(const prod of completedThisMonth) {
+    if(prod.type !== 'owner') continue;
+    const owner = getOwnerByCell(prod.cellId); if(!owner) continue;
+    const boardTxs      = allTxs.filter(tx => tx.productId===prod.id);
+    const pendingBoardTxs   = boardTxs.filter(tx => tx.paymentStatus==='pending');
+    const confirmedBoardTxs = boardTxs.filter(tx => tx.paymentStatus==='confirmed');
+    const confirmedTotal = confirmedBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const pendingTotal   = pendingBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const canSettle = pendingBoardTxs.length === 0;
+    boardSettlements.push({product:prod, owner, boardTxs, pendingBoardTxs, confirmedTotal, pendingTotal, canSettle});
+  }
+
+  const allConfirmedThisMonth = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt>=start && dt<end && tx.paymentStatus==='confirmed';
+  });
+  const totalRev = allConfirmedThisMonth.reduce((s,tx)=>s+(tx.amount||0), 0);
+  const storeRev = allConfirmedThisMonth.filter(tx=>tx.productType==='store').reduce((s,tx)=>s+(tx.amount||0), 0);
+  const feeRev   = boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+(b.confirmedTotal*(b.owner.feeRate/100)), 0);
+
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['CLK Toys POS 月報表', monthStr],[],
+    ['總營業額（已確認）', Math.round(totalRev)],
+    ['店內收益（含手續費）', Math.round(storeRev + feeRev)],[],
+    ['格主應撥款總額', Math.round(boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+b.confirmedTotal*(1-b.owner.feeRate/100),0))],
+    ['暫緩撥款（含待核帳）', boardSettlements.filter(b=>!b.canSettle).length + ' 張刮板'],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
+
+  const ownerBoardMap = {};
+  boardSettlements.forEach(b => {
+    if(!ownerBoardMap[b.owner.id]) ownerBoardMap[b.owner.id]={owner:b.owner, canSettle:[], pending:[]};
+    if(b.canSettle) ownerBoardMap[b.owner.id].canSettle.push(b);
+    else ownerBoardMap[b.owner.id].pending.push(b);
+  });
+
+  const ws2data = [];
+  Object.values(ownerBoardMap).forEach(({owner, canSettle, pending}) => {
+    ws2data.push(['【'+owner.name+'】', '費率 '+owner.feeRate+'%', '結帳日：每月'+owner.settleDay+'號', '', '', '']);
+    if(canSettle.length > 0) {
+      ws2data.push(['✅ 本期應撥款', '', '', '', '', '']);
+      ws2data.push(['格子','刮板品名','完刮日','實收金額','手續費('+owner.feeRate+'%)','格主可得']);
+      canSettle.forEach(b => {
+        const ct = b.product.completedAt?.toDate ? b.product.completedAt.toDate() : new Date(b.product.completedAt);
+        const fee = Math.round(b.confirmedTotal * owner.feeRate/100);
+        ws2data.push([b.product.cellId||'', b.product.name||'', ct.toLocaleDateString('zh-TW'), b.confirmedTotal, fee, b.confirmedTotal-fee]);
+      });
+      const tg = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*(1-owner.feeRate/100)),0);
+      const tf = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*owner.feeRate/100),0);
+      const ta = canSettle.reduce((s,b)=>s+b.confirmedTotal,0);
+      ws2data.push(['合計','','',ta,tf,tg]);
+    }
+    if(pending.length > 0) {
+      ws2data.push(['⏳ 暫緩撥款', '', '', '', '', '']);
+      pending.forEach(b => {
+        ws2data.push([b.product.cellId||'', b.product.name||'', b.confirmedTotal, b.pendingTotal, '待核帳'+b.pendingBoardTxs.length+'筆', '']);
+      });
+    }
+    ws2data.push(['']);
+  });
+  if(ws2data.length===0) ws2data.push(['本月無格主結算項目']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2data), '格主應撥款');
+
+  const allMonthTxs = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt >= start && dt < end;
+  });
+  const ownerTxMap = {};
+  const storeTxList = [];
+  allMonthTxs.forEach(tx => {
+    if(tx.productType==='owner') {
+      const owner = getOwnerByCell(tx.cellId);
+      const key = owner ? owner.id : 'unknown';
+      if(!ownerTxMap[key]) ownerTxMap[key]={owner, txs:[]};
+      ownerTxMap[key].txs.push(tx);
+    } else { storeTxList.push(tx); }
+  });
+
+  const ws3data = [['日期','商品','格子/類型','格主','抽數','本筆金額','付款','狀態','登帳人','備註']];
+  if(storeTxList.length>0){
+    ws3data.push(['── 店內商品 ──','','','','','','','','','']);
+    storeTxList.forEach(tx=>{
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',
+        (tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'')),'店內','',tx.qty||1,tx.amount||0,
+        tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?'已確認':'待核帳',tx.createdByEmail||'',tx.note||'']);
+    });
+    ws3data.push(['']);
+  }
+  Object.values(ownerTxMap).forEach(({owner, txs}) => {
+    ws3data.push(['── '+(owner?owner.name:'未知格主')+' ──','','','','','','','','','']);
+    txs.forEach(tx => {
+      const prod = allProducts[tx.productId];
+      const isCompleted = prod && (prod.status==='completed'||prod.status==='scrapped');
+      const hasPending = isCompleted && allTxs.some(t=>t.productId===tx.productId&&t.paymentStatus==='pending');
+      let remark = tx.note||'';
+      if(!tx.batchCompleted) remark = (remark?remark+'；':'')+'尚未完刮，待完刮後撥款';
+      else if(hasPending) remark = (remark?remark+'；':'')+'刮板含待核帳，下期補發';
+      const txDisplayName = tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',txDisplayName,tx.cellId||'',
+        owner?.name||'',tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',
+        tx.paymentStatus==='confirmed'?(tx.batchCompleted?'已結算':'已確認'):'待核帳',tx.createdByEmail||'',remark]);
+    });
+    ws3data.push(['']);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws3data), '交易明細');
+  XLSX.writeFile(wb, 'CLK-POS-'+monthStr+'.xlsx');
+  showToast('📥 報表下載中...');
+};
+
 window.downloadSettlementReport = async function(day, selYear, selMonth) {
   const now = new Date();
   selYear  = parseInt(selYear  || now.getFullYear());
