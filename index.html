@@ -164,6 +164,10 @@ select option{background:var(--surface2);}
   .modal{padding:20px;}
   .login-card{padding:32px 24px;}
 }
+.label-item{background:#fff;border:1px solid #ddd;display:inline-flex;flex-direction:column;align-items:center;padding:6px;margin:3px;break-inside:avoid;}
+.label-item canvas{display:block;}
+.label-code-text{font-size:9px;color:#000;margin-top:3px;font-family:monospace;word-break:break-all;text-align:center;max-width:90px;}
+@media print{body *{visibility:hidden;}#label-print-area,#label-print-area *{visibility:visible;}#label-print-area{position:fixed;top:0;left:0;width:100%;display:flex;flex-wrap:wrap;}.label-item{border:none;padding:4px;}}
 </style>
 <link rel="manifest" href="#" id="pwa-manifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -231,7 +235,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
         <div class="stat-card"><div class="stat-label">交易筆數</div><div class="stat-value yellow" id="stat-count">0</div></div>
       </div>
       <div id="pending-alert" class="hidden"><div class="alert alert-warning">⚠️ 有 <strong id="pending-count">0</strong> 筆轉帳待老闆核帳</div></div>
-      <div id="barcode-alert" class="hidden"><div class="alert alert-warning">🔖 條碼庫存不足（低於5張）：<span id="barcode-alert-names"></span></div></div>
+
 
       <div class="card">
         <div class="card-header"><div class="card-title">💰 格主應撥款（本月已結算）</div></div>
@@ -384,15 +388,98 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     <!-- OWNERS -->
     <div id="page-owners" class="page">
       <div class="section-title">🏪 格主管理</div>
-      <div class="flex-between" style="margin-bottom:12px;">
-        <div style="font-size:13px;color:var(--text2);">管理格主與所屬格子</div>
-        <button class="btn btn-primary btn-sm" onclick="openNewOwnerModal()">＋ 新增格主</button>
+      <div class="tab-group" style="margin-bottom:0;">
+        <button class="tab-btn active" id="owner-main-tab-manage" onclick="switchOwnerMainTab('manage',this)">格主列表</button>
+        <button class="tab-btn" id="owner-main-tab-label" onclick="switchOwnerMainTab('label',this)">🏷️ 標籤列印</button>
       </div>
-      <div class="tab-group">
-        <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
-        <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+
+      <!-- 格主列表頁籤 -->
+      <div id="owner-section-manage">
+        <div class="flex-between" style="margin:12px 0;">
+          <div style="font-size:13px;color:var(--text2);">管理格主與所屬格子</div>
+          <button class="btn btn-primary btn-sm" onclick="openNewOwnerModal()">＋ 新增格主</button>
+        </div>
+        <div class="tab-group">
+          <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
+          <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+        </div>
+        <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
       </div>
-      <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
+
+      <!-- 標籤列印頁籤 -->
+      <div id="owner-section-label" class="hidden">
+        <div class="card" style="margin-top:12px;">
+          <div class="card-title" style="margin-bottom:16px;">⚙️ 列印設定</div>
+
+          <div class="field-group">
+            <label class="field-label">選擇格主</label>
+            <select id="label-owner-select" onchange="onLabelOwnerChange()">
+              <option value="">請選擇格主...</option>
+            </select>
+          </div>
+
+          <div id="label-prefix-section" class="hidden">
+            <div class="field-group">
+              <label class="field-label">選擇前綴</label>
+              <select id="label-prefix-select" onchange="onLabelPrefixChange()">
+                <option value="">請選擇前綴...</option>
+                <option value="__new__">＋ 新增前綴</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="label-new-prefix-section" class="hidden">
+            <div class="field-group">
+              <label class="field-label">新前綴名稱（如：A01）</label>
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="label-new-prefix-input" placeholder="A01" style="flex:1;">
+                <button class="btn btn-secondary btn-sm" onclick="addLabelPrefix()">新增</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="label-config-section" class="hidden">
+            <div class="alert alert-info" id="label-last-info" style="margin-bottom:12px;"></div>
+            <div class="field-group">
+              <label class="field-label">連接符號</label>
+              <select id="label-separator">
+                <option value="-">- （橫槓）</option>
+                <option value="">（無）</option>
+                <option value="_">_ （底線）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="field-group">
+                <label class="field-label">起始號碼（含補零）</label>
+                <input type="text" id="label-start-num" placeholder="00000000001">
+              </div>
+              <div class="field-group">
+                <label class="field-label">列印張數</label>
+                <input type="number" id="label-count" value="50" min="1" max="500">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">每行標籤數（影響大小）</label>
+              <select id="label-cols">
+                <option value="2">2 個（較大）</option>
+                <option value="3" selected>3 個（中）</option>
+                <option value="4">4 個（較小）</option>
+              </select>
+            </div>
+            <div class="alert alert-warning" style="margin-bottom:12px;">📋 列印時請選「邊距：無」、「縮放：100%」</div>
+            <button class="btn btn-primary" onclick="generateAndPrint()">🔄 產生預覽</button>
+          </div>
+        </div>
+
+        <!-- 預覽區 -->
+        <div id="label-preview-card" class="card hidden" style="margin-top:12px;">
+          <div class="flex-between" style="margin-bottom:12px;">
+            <div class="card-title">👀 預覽 <span id="label-total-count" style="font-size:12px;color:var(--text2);font-weight:400;margin-left:8px;"></span></div>
+            <button class="btn btn-success btn-sm" onclick="printAndSave()">🖨️ 列印並儲存進度</button>
+          </div>
+          <div id="label-preview-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+        </div>
+      </div>
     </div>
 
     <!-- REPORT -->
@@ -439,10 +526,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
         </div>
         <div id="transfer-list"><div class="empty-state"><div class="icon">✅</div><p>目前無待核帳轉帳</p></div></div>
       </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">🔖 格主條碼發放紀錄</div></div>
-        <div id="barcode-records-list"><div class="empty-state"><div class="icon">🔖</div><p>尚無格主資料</p></div></div>
-      </div>
+
     </div>
 
   </div><!-- end main-content -->
@@ -670,6 +754,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
 </div>
 
 <div id="toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;z-index:999;display:none;white-space:nowrap;max-width:90vw;text-align:center;"></div>
+<div id="label-print-area" style="display:none;"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -744,7 +829,7 @@ async function initApp() {
   renderDashboard();
   populateReportMonths();
   setupRealtimeListeners();
-  if(isBoss){ renderTransferList(); renderBarcodeRecords(); }
+  if(isBoss){ renderTransferList(); }
   // 綁定快速搜尋輸入事件
   const qsEl = document.getElementById('quick-search');
   if(qsEl) qsEl.addEventListener('input', ()=>window.renderQuickList());
@@ -764,8 +849,7 @@ function setupRealtimeListeners() {
   onSnapshot(collection(db,'owners'), snap => {
     snap.forEach(d => { allOwners[d.id]={id:d.id,...d.data()}; });
     renderOwnersList(); populateCellSelects();
-    if(isBoss) renderBarcodeRecords();
-  });
+    if(isBoss)   });
 }
 
 async function loadOwners() {
@@ -890,7 +974,6 @@ async function renderDashboard() {
   renderOwnerPayouts(allTxs.filter(tx=>tx.paymentStatus==='confirmed'));
   populateDateFilter();
   renderRecentTx();
-  checkBarcodeAlerts();
 }
 
 function renderOwnerPayouts(confirmedTxs) {
@@ -975,14 +1058,6 @@ window.renderRecentTx = function() {
   });
 };
 
-function checkBarcodeAlerts() {
-  const low = Object.values(allOwners).filter(o=>{
-    const used=o.barcodeUsed||0, total=o.barcodeTotal||0;
-    return (total-used)<=5;
-  });
-  document.getElementById('barcode-alert').classList.toggle('hidden',low.length===0);
-  document.getElementById('barcode-alert-names').textContent = low.map(o=>`${o.name}(剩${(o.barcodeTotal||0)-(o.barcodeUsed||0)}張)`).join('、');
-}
 
 // ===== HELPER: 透過格子找格主 =====
 function getOwnerByCell(cellId) {
@@ -2102,21 +2177,7 @@ window.confirmTransfer = async function(txId,productId,amount) {
 };
 
 // ===== BARCODE RECORDS =====
-function renderBarcodeRecords() {
-  const el=document.getElementById('barcode-records-list');
-  const owners=Object.values(allOwners);
-  if(owners.length===0){el.innerHTML='<div class="empty-state"><div class="icon">🔖</div><p>尚無格主</p></div>';return;}
-  el.innerHTML=owners.map(o=>{
-    const used=o.barcodeUsed||0,total=o.barcodeTotal||0,rem=total-used;
-    const isLow=rem<=5;
-    return `<div class="owner-card">
-      <div class="flex-between">
-        <div><div style="font-weight:600;">${o.name}</div><div style="font-size:12px;color:var(--text2);">前綴：${o.barcodePrefix||'未設定'}・格子：${(o.cells||[]).join('、')||'無'}</div></div>
-        <div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:${isLow?'var(--danger)':'var(--accent3)'};">${rem}<span style="font-size:12px;color:var(--text2);"> 張剩餘</span></div><div style="font-size:12px;color:var(--text2);">已用 ${used}/${total}</div>${isLow?'<div style="font-size:11px;color:var(--danger);">⚠️ 庫存不足</div>':''}</div>
-      </div>
-    </div>`;
-  }).join('');
-}
+
 
 // ===== REPORT =====
 let currentSettleDay = 1;
@@ -2364,6 +2425,182 @@ window.closeModal = function(id) {
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
 // ===== TOAST =====
+// ===== 標籤列印系統 =====
+let currentLabelData = []; // 目前產生的標籤列表
+
+window.switchOwnerMainTab = function(tab, el) {
+  document.querySelectorAll('#page-owners .tab-group:first-of-type .tab-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('owner-section-manage').classList.toggle('hidden', tab!=='manage');
+  document.getElementById('owner-section-label').classList.toggle('hidden', tab!=='label');
+  if(tab==='label') populateLabelOwnerSelect();
+};
+
+function populateLabelOwnerSelect() {
+  const sel = document.getElementById('label-owner-select'); if(!sel) return;
+  const owners = Object.values(allOwners).filter(o=>!o.inactive);
+  sel.innerHTML = '<option value="">請選擇格主...</option>'
+    + owners.map(o=>`<option value="${o.id}">${o.name}（${(o.cells||[]).join('、')}）</option>`).join('');
+}
+
+window.onLabelOwnerChange = function() {
+  const ownerId = document.getElementById('label-owner-select').value;
+  const prefixSec = document.getElementById('label-prefix-section');
+  const configSec = document.getElementById('label-config-section');
+  const newPrefixSec = document.getElementById('label-new-prefix-section');
+  document.getElementById('label-preview-card').classList.add('hidden');
+  if(!ownerId) {
+    prefixSec.classList.add('hidden');
+    configSec.classList.add('hidden');
+    return;
+  }
+  prefixSec.classList.remove('hidden');
+  configSec.classList.add('hidden');
+  newPrefixSec.classList.add('hidden');
+  // 載入此格主的前綴清單
+  const owner = allOwners[ownerId];
+  const prefixes = owner.labelPrefixes || {}; // {prefix: {lastNum, separator}}
+  const sel = document.getElementById('label-prefix-select');
+  sel.innerHTML = '<option value="">請選擇前綴...</option>'
+    + Object.keys(prefixes).map(p=>`<option value="${p}">${p}（上次印到：${prefixes[p].lastNum||'尚未印過'}）</option>`).join('')
+    + '<option value="__new__">＋ 新增前綴</option>';
+};
+
+window.onLabelPrefixChange = function() {
+  const val = document.getElementById('label-prefix-select').value;
+  const ownerId = document.getElementById('label-owner-select').value;
+  const newPrefixSec = document.getElementById('label-new-prefix-section');
+  const configSec = document.getElementById('label-config-section');
+  document.getElementById('label-preview-card').classList.add('hidden');
+  if(val === '__new__') {
+    newPrefixSec.classList.remove('hidden');
+    configSec.classList.add('hidden');
+    return;
+  }
+  newPrefixSec.classList.add('hidden');
+  if(!val) { configSec.classList.add('hidden'); return; }
+  // 載入此前綴的設定
+  const owner = allOwners[ownerId];
+  const prefixData = (owner.labelPrefixes||{})[val] || {};
+  const lastNum = prefixData.lastNum || null;
+  const infoEl = document.getElementById('label-last-info');
+  if(lastNum) {
+    infoEl.textContent = `上次印到：${val}${prefixData.separator||'-'}${lastNum}，本次將從 ${nextNum(lastNum)} 開始`;
+    document.getElementById('label-start-num').value = nextNum(lastNum);
+  } else {
+    infoEl.textContent = '此前綴尚未印過，請設定起始號碼';
+    document.getElementById('label-start-num').value = '00000000001';
+  }
+  document.getElementById('label-separator').value = prefixData.separator || '-';
+  configSec.classList.remove('hidden');
+};
+
+function nextNum(numStr) {
+  // 保持相同位數，號碼+1
+  const n = parseInt(numStr) + 1;
+  return String(n).padStart(numStr.length, '0');
+}
+
+window.addLabelPrefix = async function() {
+  const ownerId = document.getElementById('label-owner-select').value;
+  const newPrefix = document.getElementById('label-new-prefix-input').value.trim().toUpperCase();
+  if(!ownerId || !newPrefix) { showToast('請填寫前綴'); return; }
+  const owner = allOwners[ownerId];
+  const prefixes = {...(owner.labelPrefixes||{})};
+  if(prefixes[newPrefix]) { showToast('此前綴已存在'); return; }
+  prefixes[newPrefix] = {lastNum: null, separator: '-'};
+  await updateDoc(doc(db,'owners',ownerId), {labelPrefixes: prefixes});
+  showToast('✅ 前綴已新增');
+  document.getElementById('label-new-prefix-input').value = '';
+  document.getElementById('label-new-prefix-section').classList.add('hidden');
+  onLabelOwnerChange();
+  // 自動選剛新增的
+  setTimeout(()=>{
+    document.getElementById('label-prefix-select').value = newPrefix;
+    onLabelPrefixChange();
+  }, 500);
+};
+
+window.generateAndPrint = async function() {
+  const ownerId   = document.getElementById('label-owner-select').value;
+  const prefix    = document.getElementById('label-prefix-select').value;
+  const separator = document.getElementById('label-separator').value;
+  const startStr  = document.getElementById('label-start-num').value.trim();
+  const count     = parseInt(document.getElementById('label-count').value) || 50;
+  const cols      = parseInt(document.getElementById('label-cols').value) || 3;
+  if(!ownerId||!prefix||!startStr) { showToast('請完整填寫設定'); return; }
+  if(count > 500) { showToast('一次最多500張'); return; }
+
+  // 動態載入 QRCode 套件
+  await loadLabelScript('https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js');
+
+  const startNum = parseInt(startStr.replace(/\D/g,''));
+  const padLen   = startStr.length;
+  currentLabelData = [];
+  for(let i=0; i<count; i++){
+    const numStr = String(startNum+i).padStart(padLen,'0');
+    currentLabelData.push(prefix + separator + numStr);
+  }
+  const lastCode = currentLabelData[currentLabelData.length-1];
+  const lastNum  = lastCode.slice((prefix+separator).length);
+
+  // 預覽
+  const previewGrid = document.getElementById('label-preview-grid');
+  previewGrid.innerHTML = '';
+  previewGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+  for(const code of currentLabelData) {
+    const item = document.createElement('div');
+    item.className = 'label-item';
+    const qrDiv = document.createElement('div');
+    item.appendChild(qrDiv);
+    const txt = document.createElement('div');
+    txt.className = 'label-code-text';
+    txt.textContent = code;
+    item.appendChild(txt);
+    previewGrid.appendChild(item);
+    new QRCode(qrDiv, {text:code, width:80, height:80, correctLevel:QRCode.CorrectLevel.M});
+  }
+
+  document.getElementById('label-total-count').textContent = `共 ${count} 張，印完後將記錄至 ${lastCode}`;
+  document.getElementById('label-preview-card').classList.remove('hidden');
+
+  // 同步列印區
+  document.getElementById('label-print-area').innerHTML = previewGrid.innerHTML;
+  // 儲存 lastNum 供列印後更新
+  window._pendingLabelSave = {ownerId, prefix, separator, lastNum};
+};
+
+window.printAndSave = async function() {
+  const data = window._pendingLabelSave;
+  if(!data) { showToast('請先產生預覽'); return; }
+  // 先列印
+  document.getElementById('label-print-area').style.display = 'flex';
+  window.print();
+  document.getElementById('label-print-area').style.display = 'none';
+  // 列印後更新 Firebase
+  const owner = allOwners[data.ownerId];
+  const prefixes = {...(owner.labelPrefixes||{})};
+  prefixes[data.prefix] = {lastNum: data.lastNum, separator: data.separator};
+  await updateDoc(doc(db,'owners',data.ownerId), {labelPrefixes: prefixes});
+  showToast('✅ 列印完成，進度已儲存：'+data.prefix+data.separator+data.lastNum);
+  // 更新本地快取
+  allOwners[data.ownerId] = {...owner, labelPrefixes: prefixes};
+  onLabelOwnerChange();
+  setTimeout(()=>{
+    document.getElementById('label-prefix-select').value = data.prefix;
+    onLabelPrefixChange();
+  }, 300);
+};
+
+function loadLabelScript(src) {
+  return new Promise((res,rej)=>{
+    if(document.querySelector(`script[src="${src}"]`)){res();return;}
+    const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+
 let toastTimer;
 window.showToast = function(msg,dur=2500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
 </script>
