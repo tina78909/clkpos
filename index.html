@@ -783,6 +783,7 @@ select option{background:var(--surface2);}
 <div id="label-print-area" style="display:none;"></div>
 
 <script type="module">
+console.log('MODULE SCRIPT START');
 window.addEventListener('error', function(e) {
   console.error('全域錯誤:', e.message, e.filename, e.lineno);
   document.getElementById('login-error').textContent = '系統錯誤：' + e.message;
@@ -822,6 +823,7 @@ let LOGO_B64 = ''; // embedded in HTML
 
 // ===== AUTH =====
 window.doLogin = async function() {
+  console.log('doLogin called');
   const email = document.getElementById('login-email').value.trim();
   const pass  = document.getElementById('login-password').value;
   document.getElementById('login-error').textContent = '';
@@ -834,7 +836,9 @@ window.doLogout = async function() {
 };
 document.getElementById('login-password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 
+console.log('Setting up onAuthStateChanged');
 onAuthStateChanged(auth, user => {
+  console.log('Auth state changed:', user ? user.email : 'null');
   if(user) {
     currentUser = user; isBoss = (user.uid === BOSS_UID);
     document.getElementById('login-screen').style.display = 'none';
