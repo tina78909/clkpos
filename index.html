@@ -164,6 +164,10 @@ select option{background:var(--surface2);}
   .modal{padding:20px;}
   .login-card{padding:32px 24px;}
 }
+.label-item{background:#fff;border:1px solid #ddd;display:inline-flex;flex-direction:column;align-items:center;padding:6px;margin:3px;break-inside:avoid;}
+.label-item canvas{display:block;}
+.label-code-text{font-size:9px;color:#000;margin-top:3px;font-family:monospace;word-break:break-all;text-align:center;max-width:90px;}
+@media print{body *{visibility:hidden;}#label-print-area,#label-print-area *{visibility:visible;}#label-print-area{position:fixed;top:0;left:0;width:100%;display:flex;flex-wrap:wrap;}.label-item{border:none;padding:4px;}}
 </style>
 <link rel="manifest" href="#" id="pwa-manifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -231,7 +235,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
         <div class="stat-card"><div class="stat-label">交易筆數</div><div class="stat-value yellow" id="stat-count">0</div></div>
       </div>
       <div id="pending-alert" class="hidden"><div class="alert alert-warning">⚠️ 有 <strong id="pending-count">0</strong> 筆轉帳待老闆核帳</div></div>
-      <div id="barcode-alert" class="hidden"><div class="alert alert-warning">🔖 條碼庫存不足（低於5張）：<span id="barcode-alert-names"></span></div></div>
+
 
       <div class="card">
         <div class="card-header"><div class="card-title">💰 格主應撥款（本月已結算）</div></div>
@@ -384,15 +388,98 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     <!-- OWNERS -->
     <div id="page-owners" class="page">
       <div class="section-title">🏪 格主管理</div>
-      <div class="flex-between" style="margin-bottom:12px;">
-        <div style="font-size:13px;color:var(--text2);">管理格主與所屬格子</div>
-        <button class="btn btn-primary btn-sm" onclick="openNewOwnerModal()">＋ 新增格主</button>
+      <div class="tab-group" style="margin-bottom:0;">
+        <button class="tab-btn active" id="owner-main-tab-manage" onclick="switchOwnerMainTab('manage',this)">格主列表</button>
+        <button class="tab-btn" id="owner-main-tab-label" onclick="switchOwnerMainTab('label',this)">🏷️ 標籤列印</button>
       </div>
-      <div class="tab-group">
-        <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
-        <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+
+      <!-- 格主列表頁籤 -->
+      <div id="owner-section-manage">
+        <div class="flex-between" style="margin:12px 0;">
+          <div style="font-size:13px;color:var(--text2);">管理格主與所屬格子</div>
+          <button class="btn btn-primary btn-sm" onclick="openNewOwnerModal()">＋ 新增格主</button>
+        </div>
+        <div class="tab-group">
+          <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
+          <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+        </div>
+        <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
       </div>
-      <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
+
+      <!-- 標籤列印頁籤 -->
+      <div id="owner-section-label" class="hidden">
+        <div class="card" style="margin-top:12px;">
+          <div class="card-title" style="margin-bottom:16px;">⚙️ 列印設定</div>
+
+          <div class="field-group">
+            <label class="field-label">選擇格主</label>
+            <select id="label-owner-select" onchange="onLabelOwnerChange()">
+              <option value="">請選擇格主...</option>
+            </select>
+          </div>
+
+          <div id="label-prefix-section" class="hidden">
+            <div class="field-group">
+              <label class="field-label">選擇前綴</label>
+              <select id="label-prefix-select" onchange="onLabelPrefixChange()">
+                <option value="">請選擇前綴...</option>
+                <option value="__new__">＋ 新增前綴</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="label-new-prefix-section" class="hidden">
+            <div class="field-group">
+              <label class="field-label">新前綴名稱（如：A01）</label>
+              <div style="display:flex;gap:8px;">
+                <input type="text" id="label-new-prefix-input" placeholder="A01" style="flex:1;">
+                <button class="btn btn-secondary btn-sm" onclick="addLabelPrefix()">新增</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="label-config-section" class="hidden">
+            <div class="alert alert-info" id="label-last-info" style="margin-bottom:12px;"></div>
+            <div class="field-group">
+              <label class="field-label">連接符號</label>
+              <select id="label-separator">
+                <option value="-">- （橫槓）</option>
+                <option value="">（無）</option>
+                <option value="_">_ （底線）</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <div class="field-group">
+                <label class="field-label">起始號碼（含補零）</label>
+                <input type="text" id="label-start-num" placeholder="00000000001">
+              </div>
+              <div class="field-group">
+                <label class="field-label">列印張數</label>
+                <input type="number" id="label-count" value="50" min="1" max="500">
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">每行標籤數（影響大小）</label>
+              <select id="label-cols">
+                <option value="2">2 個（較大）</option>
+                <option value="3" selected>3 個（中）</option>
+                <option value="4">4 個（較小）</option>
+              </select>
+            </div>
+            <div class="alert alert-warning" style="margin-bottom:12px;">📋 列印時請選「邊距：無」、「縮放：100%」</div>
+            <button class="btn btn-primary" onclick="generateAndPrint()">🔄 產生預覽</button>
+          </div>
+        </div>
+
+        <!-- 預覽區 -->
+        <div id="label-preview-card" class="card hidden" style="margin-top:12px;">
+          <div class="flex-between" style="margin-bottom:12px;">
+            <div class="card-title">👀 預覽 <span id="label-total-count" style="font-size:12px;color:var(--text2);font-weight:400;margin-left:8px;"></span></div>
+            <button class="btn btn-success btn-sm" onclick="printAndSave()">🖨️ 列印並儲存進度</button>
+          </div>
+          <div id="label-preview-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+        </div>
+      </div>
     </div>
 
     <!-- REPORT -->
@@ -430,6 +517,43 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     </div>
 
     S -->
+    <!-- PRINT -->
+    <div id="page-print" class="page">
+      <div class="section-title">🖨️ 條碼列印</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">⚙️ 列印設定</div></div>
+        <div class="field-group">
+          <label class="field-label">選擇格子</label>
+          <select id="print-cell-select" style="width:100%;"></select>
+        </div>
+        <div id="print-prefix-info" class="alert alert-info hidden"></div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">起始號碼</label>
+            <input type="number" id="print-start-num" value="1" min="1">
+          </div>
+          <div class="field-group">
+            <label class="field-label">列印數量</label>
+            <input type="number" id="print-qty" value="10" min="1" max="200">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">流水號位數</label>
+          <select id="print-digits">
+            <option value="5">5位數（如 A01-00001）</option>
+            <option value="8" selected>8位數（如 A01-00000001）</option>
+            <option value="10">10位數（如 A01-0000000001）</option>
+          </select>
+        </div>
+        <div id="print-sample" class="alert alert-info mt-8" style="font-family:monospace;font-size:13px;"></div>
+        <button class="btn btn-success btn-full mt-8" id="print-generate-btn">⬇️ 生成並下載 PDF</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">📋 各格子列印紀錄</div></div>
+        <div id="print-records-list"><div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div></div>
+      </div>
+    </div>
+
     <div id="page-boss" class="page">
       <div class="section-title">👑 老闆專區 <span class="sub">待核帳管理</span></div>
       <div class="card">
@@ -439,10 +563,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
         </div>
         <div id="transfer-list"><div class="empty-state"><div class="icon">✅</div><p>目前無待核帳轉帳</p></div></div>
       </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">🔖 格主條碼發放紀錄</div></div>
-        <div id="barcode-records-list"><div class="empty-state"><div class="icon">🔖</div><p>尚無格主資料</p></div></div>
-      </div>
+
     </div>
 
   </div><!-- end main-content -->
@@ -462,6 +583,9 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
     </button>
     <button class="bottomnav-item" onclick="switchPage('report',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span>報表</span>
+    </button>
+    <button class="bottomnav-item" onclick="switchPage('print',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg><span>列印</span>
     </button>
     <button class="bottomnav-item" id="boss-nav-btn" onclick="switchPage('boss',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21,13.89 7,23 12,20 17,23 15.79,13.88"/></svg><span>老闆</span>
@@ -670,6 +794,7 @@ document.getElementById('pwa-manifest').href = URL.createObjectURL(blob);
 </div>
 
 <div id="toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;z-index:999;display:none;white-space:nowrap;max-width:90vw;text-align:center;"></div>
+<div id="label-print-area" style="display:none;"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -744,7 +869,7 @@ async function initApp() {
   renderDashboard();
   populateReportMonths();
   setupRealtimeListeners();
-  if(isBoss){ renderTransferList(); renderBarcodeRecords(); }
+  if(isBoss){ renderTransferList(); }
   // 綁定快速搜尋輸入事件
   const qsEl = document.getElementById('quick-search');
   if(qsEl) qsEl.addEventListener('input', ()=>window.renderQuickList());
@@ -764,8 +889,7 @@ function setupRealtimeListeners() {
   onSnapshot(collection(db,'owners'), snap => {
     snap.forEach(d => { allOwners[d.id]={id:d.id,...d.data()}; });
     renderOwnersList(); populateCellSelects();
-    if(isBoss) renderBarcodeRecords();
-  });
+    if(isBoss)   });
 }
 
 async function loadOwners() {
@@ -792,6 +916,7 @@ window.switchPage = function(page, el) {
   el.classList.add('active');
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
+  if(page==='print') initPrintPage();
 };
 window.switchToPick = function() {
   dashboardMode = 'pick';
@@ -890,7 +1015,6 @@ async function renderDashboard() {
   renderOwnerPayouts(allTxs.filter(tx=>tx.paymentStatus==='confirmed'));
   populateDateFilter();
   renderRecentTx();
-  checkBarcodeAlerts();
 }
 
 function renderOwnerPayouts(confirmedTxs) {
@@ -975,14 +1099,6 @@ window.renderRecentTx = function() {
   });
 };
 
-function checkBarcodeAlerts() {
-  const low = Object.values(allOwners).filter(o=>{
-    const used=o.barcodeUsed||0, total=o.barcodeTotal||0;
-    return (total-used)<=5;
-  });
-  document.getElementById('barcode-alert').classList.toggle('hidden',low.length===0);
-  document.getElementById('barcode-alert-names').textContent = low.map(o=>`${o.name}(剩${(o.barcodeTotal||0)-(o.barcodeUsed||0)}張)`).join('、');
-}
 
 // ===== HELPER: 透過格子找格主 =====
 function getOwnerByCell(cellId) {
@@ -2102,21 +2218,7 @@ window.confirmTransfer = async function(txId,productId,amount) {
 };
 
 // ===== BARCODE RECORDS =====
-function renderBarcodeRecords() {
-  const el=document.getElementById('barcode-records-list');
-  const owners=Object.values(allOwners);
-  if(owners.length===0){el.innerHTML='<div class="empty-state"><div class="icon">🔖</div><p>尚無格主</p></div>';return;}
-  el.innerHTML=owners.map(o=>{
-    const used=o.barcodeUsed||0,total=o.barcodeTotal||0,rem=total-used;
-    const isLow=rem<=5;
-    return `<div class="owner-card">
-      <div class="flex-between">
-        <div><div style="font-weight:600;">${o.name}</div><div style="font-size:12px;color:var(--text2);">前綴：${o.barcodePrefix||'未設定'}・格子：${(o.cells||[]).join('、')||'無'}</div></div>
-        <div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:${isLow?'var(--danger)':'var(--accent3)'};">${rem}<span style="font-size:12px;color:var(--text2);"> 張剩餘</span></div><div style="font-size:12px;color:var(--text2);">已用 ${used}/${total}</div>${isLow?'<div style="font-size:11px;color:var(--danger);">⚠️ 庫存不足</div>':''}</div>
-      </div>
-    </div>`;
-  }).join('');
-}
+
 
 // ===== REPORT =====
 let currentSettleDay = 1;
@@ -2242,6 +2344,140 @@ window.renderSettlementBoard = function() {
   }, 0);
 };
 
+window.downloadReport = async function() {
+  const year  = parseInt(document.getElementById('report-year')?.value || new Date().getFullYear());
+  const month = parseInt(document.getElementById('report-month-only')?.value || (new Date().getMonth()+1));
+  const monthStr = year+'-'+String(month).padStart(2,'0');
+  const start = new Date(year, month-1, 1);
+  const end   = new Date(year, month, 1);
+
+  showToast('⏳ 正在抓取最新資料...');
+  const [prodSnap, txSnap] = await Promise.all([
+    getDocs(collection(db,'products')),
+    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
+  ]);
+  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
+  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
+
+  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+  const wb = XLSX.utils.book_new();
+
+  const completedThisMonth = Object.values(allProducts).filter(p => {
+    if(!p.completedAt || p.deleted) return false;
+    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
+    return ct >= start && ct < end && (p.status==='completed' || p.status==='scrapped');
+  });
+
+  const boardSettlements = [];
+  for(const prod of completedThisMonth) {
+    if(prod.type !== 'owner') continue;
+    const owner = getOwnerByCell(prod.cellId); if(!owner) continue;
+    const boardTxs      = allTxs.filter(tx => tx.productId===prod.id);
+    const pendingBoardTxs   = boardTxs.filter(tx => tx.paymentStatus==='pending');
+    const confirmedBoardTxs = boardTxs.filter(tx => tx.paymentStatus==='confirmed');
+    const confirmedTotal = confirmedBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const pendingTotal   = pendingBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const canSettle = pendingBoardTxs.length === 0;
+    boardSettlements.push({product:prod, owner, boardTxs, pendingBoardTxs, confirmedTotal, pendingTotal, canSettle});
+  }
+
+  const allConfirmedThisMonth = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt>=start && dt<end && tx.paymentStatus==='confirmed';
+  });
+  const totalRev = allConfirmedThisMonth.reduce((s,tx)=>s+(tx.amount||0), 0);
+  const storeRev = allConfirmedThisMonth.filter(tx=>tx.productType==='store').reduce((s,tx)=>s+(tx.amount||0), 0);
+  const feeRev   = boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+(b.confirmedTotal*(b.owner.feeRate/100)), 0);
+
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['CLK Toys POS 月報表', monthStr],[],
+    ['總營業額（已確認）', Math.round(totalRev)],
+    ['店內收益（含手續費）', Math.round(storeRev + feeRev)],[],
+    ['格主應撥款總額', Math.round(boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+b.confirmedTotal*(1-b.owner.feeRate/100),0))],
+    ['暫緩撥款（含待核帳）', boardSettlements.filter(b=>!b.canSettle).length + ' 張刮板'],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
+
+  const ownerBoardMap = {};
+  boardSettlements.forEach(b => {
+    if(!ownerBoardMap[b.owner.id]) ownerBoardMap[b.owner.id]={owner:b.owner, canSettle:[], pending:[]};
+    if(b.canSettle) ownerBoardMap[b.owner.id].canSettle.push(b);
+    else ownerBoardMap[b.owner.id].pending.push(b);
+  });
+
+  const ws2data = [];
+  Object.values(ownerBoardMap).forEach(({owner, canSettle, pending}) => {
+    ws2data.push(['【'+owner.name+'】', '費率 '+owner.feeRate+'%', '結帳日：每月'+owner.settleDay+'號', '', '', '']);
+    if(canSettle.length > 0) {
+      ws2data.push(['✅ 本期應撥款', '', '', '', '', '']);
+      ws2data.push(['格子','刮板品名','完刮日','實收金額','手續費('+owner.feeRate+'%)','格主可得']);
+      canSettle.forEach(b => {
+        const ct = b.product.completedAt?.toDate ? b.product.completedAt.toDate() : new Date(b.product.completedAt);
+        const fee = Math.round(b.confirmedTotal * owner.feeRate/100);
+        ws2data.push([b.product.cellId||'', b.product.name||'', ct.toLocaleDateString('zh-TW'), b.confirmedTotal, fee, b.confirmedTotal-fee]);
+      });
+      const tg = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*(1-owner.feeRate/100)),0);
+      const tf = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*owner.feeRate/100),0);
+      const ta = canSettle.reduce((s,b)=>s+b.confirmedTotal,0);
+      ws2data.push(['合計','','',ta,tf,tg]);
+    }
+    if(pending.length > 0) {
+      ws2data.push(['⏳ 暫緩撥款', '', '', '', '', '']);
+      pending.forEach(b => {
+        ws2data.push([b.product.cellId||'', b.product.name||'', b.confirmedTotal, b.pendingTotal, '待核帳'+b.pendingBoardTxs.length+'筆', '']);
+      });
+    }
+    ws2data.push(['']);
+  });
+  if(ws2data.length===0) ws2data.push(['本月無格主結算項目']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2data), '格主應撥款');
+
+  const allMonthTxs = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt >= start && dt < end;
+  });
+  const ownerTxMap = {};
+  const storeTxList = [];
+  allMonthTxs.forEach(tx => {
+    if(tx.productType==='owner') {
+      const owner = getOwnerByCell(tx.cellId);
+      const key = owner ? owner.id : 'unknown';
+      if(!ownerTxMap[key]) ownerTxMap[key]={owner, txs:[]};
+      ownerTxMap[key].txs.push(tx);
+    } else { storeTxList.push(tx); }
+  });
+
+  const ws3data = [['日期','商品','格子/類型','格主','抽數','本筆金額','付款','狀態','登帳人','備註']];
+  if(storeTxList.length>0){
+    ws3data.push(['── 店內商品 ──','','','','','','','','','']);
+    storeTxList.forEach(tx=>{
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',
+        (tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'')),'店內','',tx.qty||1,tx.amount||0,
+        tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?'已確認':'待核帳',tx.createdByEmail||'',tx.note||'']);
+    });
+    ws3data.push(['']);
+  }
+  Object.values(ownerTxMap).forEach(({owner, txs}) => {
+    ws3data.push(['── '+(owner?owner.name:'未知格主')+' ──','','','','','','','','','']);
+    txs.forEach(tx => {
+      const prod = allProducts[tx.productId];
+      const isCompleted = prod && (prod.status==='completed'||prod.status==='scrapped');
+      const hasPending = isCompleted && allTxs.some(t=>t.productId===tx.productId&&t.paymentStatus==='pending');
+      let remark = tx.note||'';
+      if(!tx.batchCompleted) remark = (remark?remark+'；':'')+'尚未完刮，待完刮後撥款';
+      else if(hasPending) remark = (remark?remark+'；':'')+'刮板含待核帳，下期補發';
+      const txDisplayName = tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',txDisplayName,tx.cellId||'',
+        owner?.name||'',tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',
+        tx.paymentStatus==='confirmed'?(tx.batchCompleted?'已結算':'已確認'):'待核帳',tx.createdByEmail||'',remark]);
+    });
+    ws3data.push(['']);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws3data), '交易明細');
+  XLSX.writeFile(wb, 'CLK-POS-'+monthStr+'.xlsx');
+  showToast('📥 報表下載中...');
+};
+
 window.downloadSettlementReport = async function(day, selYear, selMonth) {
   const now = new Date();
   selYear  = parseInt(selYear  || now.getFullYear());
@@ -2364,6 +2600,314 @@ window.closeModal = function(id) {
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
 // ===== TOAST =====
+// ===== 標籤列印系統 =====
+let currentLabelData = []; // 目前產生的標籤列表
+
+window.switchOwnerMainTab = function(tab, el) {
+  document.querySelectorAll('#page-owners .tab-group:first-of-type .tab-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('owner-section-manage').classList.toggle('hidden', tab!=='manage');
+  document.getElementById('owner-section-label').classList.toggle('hidden', tab!=='label');
+  if(tab==='label') populateLabelOwnerSelect();
+};
+
+function populateLabelOwnerSelect() {
+  const sel = document.getElementById('label-owner-select'); if(!sel) return;
+  const owners = Object.values(allOwners).filter(o=>!o.inactive);
+  sel.innerHTML = '<option value="">請選擇格主...</option>'
+    + owners.map(o=>`<option value="${o.id}">${o.name}（${(o.cells||[]).join('、')}）</option>`).join('');
+}
+
+window.onLabelOwnerChange = function() {
+  const ownerId = document.getElementById('label-owner-select').value;
+  const prefixSec = document.getElementById('label-prefix-section');
+  const configSec = document.getElementById('label-config-section');
+  const newPrefixSec = document.getElementById('label-new-prefix-section');
+  document.getElementById('label-preview-card').classList.add('hidden');
+  if(!ownerId) {
+    prefixSec.classList.add('hidden');
+    configSec.classList.add('hidden');
+    return;
+  }
+  prefixSec.classList.remove('hidden');
+  configSec.classList.add('hidden');
+  newPrefixSec.classList.add('hidden');
+  // 載入此格主的前綴清單
+  const owner = allOwners[ownerId];
+  const prefixes = owner.labelPrefixes || {}; // {prefix: {lastNum, separator}}
+  const sel = document.getElementById('label-prefix-select');
+  sel.innerHTML = '<option value="">請選擇前綴...</option>'
+    + Object.keys(prefixes).map(p=>`<option value="${p}">${p}（上次印到：${prefixes[p].lastNum||'尚未印過'}）</option>`).join('')
+    + '<option value="__new__">＋ 新增前綴</option>';
+};
+
+window.onLabelPrefixChange = function() {
+  const val = document.getElementById('label-prefix-select').value;
+  const ownerId = document.getElementById('label-owner-select').value;
+  const newPrefixSec = document.getElementById('label-new-prefix-section');
+  const configSec = document.getElementById('label-config-section');
+  document.getElementById('label-preview-card').classList.add('hidden');
+  if(val === '__new__') {
+    newPrefixSec.classList.remove('hidden');
+    configSec.classList.add('hidden');
+    return;
+  }
+  newPrefixSec.classList.add('hidden');
+  if(!val) { configSec.classList.add('hidden'); return; }
+  // 載入此前綴的設定
+  const owner = allOwners[ownerId];
+  const prefixData = (owner.labelPrefixes||{})[val] || {};
+  const lastNum = prefixData.lastNum || null;
+  const infoEl = document.getElementById('label-last-info');
+  if(lastNum) {
+    infoEl.textContent = `上次印到：${val}${prefixData.separator||'-'}${lastNum}，本次將從 ${nextNum(lastNum)} 開始`;
+    document.getElementById('label-start-num').value = nextNum(lastNum);
+  } else {
+    infoEl.textContent = '此前綴尚未印過，請設定起始號碼';
+    document.getElementById('label-start-num').value = '00000000001';
+  }
+  document.getElementById('label-separator').value = prefixData.separator || '-';
+  configSec.classList.remove('hidden');
+};
+
+function nextNum(numStr) {
+  // 保持相同位數，號碼+1
+  const n = parseInt(numStr) + 1;
+  return String(n).padStart(numStr.length, '0');
+}
+
+window.addLabelPrefix = async function() {
+  const ownerId = document.getElementById('label-owner-select').value;
+  const newPrefix = document.getElementById('label-new-prefix-input').value.trim().toUpperCase();
+  if(!ownerId || !newPrefix) { showToast('請填寫前綴'); return; }
+  const owner = allOwners[ownerId];
+  const prefixes = {...(owner.labelPrefixes||{})};
+  if(prefixes[newPrefix]) { showToast('此前綴已存在'); return; }
+  prefixes[newPrefix] = {lastNum: null, separator: '-'};
+  await updateDoc(doc(db,'owners',ownerId), {labelPrefixes: prefixes});
+  showToast('✅ 前綴已新增');
+  document.getElementById('label-new-prefix-input').value = '';
+  document.getElementById('label-new-prefix-section').classList.add('hidden');
+  onLabelOwnerChange();
+  // 自動選剛新增的
+  setTimeout(()=>{
+    document.getElementById('label-prefix-select').value = newPrefix;
+    onLabelPrefixChange();
+  }, 500);
+};
+
+window.generateAndPrint = async function() {
+  const ownerId   = document.getElementById('label-owner-select').value;
+  const prefix    = document.getElementById('label-prefix-select').value;
+  const separator = document.getElementById('label-separator').value;
+  const startStr  = document.getElementById('label-start-num').value.trim();
+  const count     = parseInt(document.getElementById('label-count').value) || 50;
+  const cols      = parseInt(document.getElementById('label-cols').value) || 3;
+  if(!ownerId||!prefix||!startStr) { showToast('請完整填寫設定'); return; }
+  if(count > 500) { showToast('一次最多500張'); return; }
+
+  // 動態載入 QRCode 套件
+  await loadLabelScript('https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js');
+
+  const startNum = parseInt(startStr.replace(/[^0-9]/g,''));
+  const padLen   = startStr.length;
+  currentLabelData = [];
+  for(let i=0; i<count; i++){
+    const numStr = String(startNum+i).padStart(padLen,'0');
+    currentLabelData.push(prefix + separator + numStr);
+  }
+  const lastCode = currentLabelData[currentLabelData.length-1];
+  const lastNum  = lastCode.slice((prefix+separator).length);
+
+  // 預覽
+  const previewGrid = document.getElementById('label-preview-grid');
+  previewGrid.innerHTML = '';
+  previewGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+  for(const code of currentLabelData) {
+    const item = document.createElement('div');
+    item.className = 'label-item';
+    const qrDiv = document.createElement('div');
+    item.appendChild(qrDiv);
+    const txt = document.createElement('div');
+    txt.className = 'label-code-text';
+    txt.textContent = code;
+    item.appendChild(txt);
+    previewGrid.appendChild(item);
+    new QRCode(qrDiv, {text:code, width:80, height:80, correctLevel:QRCode.CorrectLevel.M});
+  }
+
+  document.getElementById('label-total-count').textContent = `共 ${count} 張，印完後將記錄至 ${lastCode}`;
+  document.getElementById('label-preview-card').classList.remove('hidden');
+
+  // 同步列印區
+  document.getElementById('label-print-area').innerHTML = previewGrid.innerHTML;
+  // 儲存 lastNum 供列印後更新
+  window._pendingLabelSave = {ownerId, prefix, separator, lastNum};
+};
+
+window.printAndSave = async function() {
+  const data = window._pendingLabelSave;
+  if(!data) { showToast('請先產生預覽'); return; }
+  // 先列印
+  document.getElementById('label-print-area').style.display = 'flex';
+  window.print();
+  document.getElementById('label-print-area').style.display = 'none';
+  // 列印後更新 Firebase
+  const owner = allOwners[data.ownerId];
+  const prefixes = {...(owner.labelPrefixes||{})};
+  prefixes[data.prefix] = {lastNum: data.lastNum, separator: data.separator};
+  await updateDoc(doc(db,'owners',data.ownerId), {labelPrefixes: prefixes});
+  showToast('✅ 列印完成，進度已儲存：'+data.prefix+data.separator+data.lastNum);
+  // 更新本地快取
+  allOwners[data.ownerId] = {...owner, labelPrefixes: prefixes};
+  onLabelOwnerChange();
+  setTimeout(()=>{
+    document.getElementById('label-prefix-select').value = data.prefix;
+    onLabelPrefixChange();
+  }, 300);
+};
+
+function loadLabelScript(src) {
+  return new Promise((res,rej)=>{
+    if(document.querySelector(`script[src="${src}"]`)){res();return;}
+    const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
+
+// ===== 列印功能 =====
+window.initPrintPage = function() {
+  const sel = document.getElementById('print-cell-select');
+  if(!sel) return;
+  const cells = getAllCells().filter(c => !allOwners[c.ownerId]?.inactive);
+  sel.innerHTML = '<option value="">請選擇格子...</option>'
+    + cells.map(c=>`<option value="${c.cellId}" data-oid="${c.ownerId}">${c.cellId}（${c.ownerName}）</option>`).join('');
+  sel.onchange = window.onPrintCellChange;
+  document.getElementById('print-start-num').oninput = window.updatePrintPreview;
+  document.getElementById('print-qty').oninput = window.updatePrintPreview;
+  document.getElementById('print-digits').onchange = window.updatePrintPreview;
+  document.getElementById('print-generate-btn').onclick = window.generateBarcodePDF;
+  renderPrintRecords();
+};
+
+window.onPrintCellChange = function() {
+  const cellId = document.getElementById('print-cell-select').value;
+  if(!cellId){ document.getElementById('print-prefix-info').classList.add('hidden'); return; }
+  const owner = getOwnerByCell(cellId);
+  const rec = (owner?.printRecords||{})[cellId] || {lastNum:0};
+  const infoEl = document.getElementById('print-prefix-info');
+  infoEl.classList.remove('hidden');
+  infoEl.innerHTML = `格子 <strong>${cellId}</strong>・格主：${owner?.name||''}・上次印到 <strong>${rec.lastNum}</strong> 號，建議從 <strong>${rec.lastNum+1}</strong> 開始`;
+  document.getElementById('print-start-num').value = rec.lastNum + 1;
+  window.updatePrintPreview();
+};
+
+window.updatePrintPreview = function() {
+  const cellId   = document.getElementById('print-cell-select').value;
+  const startNum = parseInt(document.getElementById('print-start-num').value)||1;
+  const qty      = parseInt(document.getElementById('print-qty').value)||1;
+  const digits   = parseInt(document.getElementById('print-digits').value)||8;
+  const el = document.getElementById('print-sample');
+  if(!cellId){ el.textContent=''; return; }
+  const first = cellId+'-'+String(startNum).padStart(digits,'0');
+  const last  = cellId+'-'+String(startNum+qty-1).padStart(digits,'0');
+  el.innerHTML = `預覽：<strong>${first}</strong> ～ <strong>${last}</strong>（共 ${qty} 張）`;
+};
+
+window.generateBarcodePDF = async function() {
+  const cellId   = document.getElementById('print-cell-select').value;
+  const startNum = parseInt(document.getElementById('print-start-num').value)||1;
+  const qty      = parseInt(document.getElementById('print-qty').value)||1;
+  const digits   = parseInt(document.getElementById('print-digits').value)||8;
+  if(!cellId){ showToast('請先選擇格子'); return; }
+  if(qty<1||qty>200){ showToast('數量需在 1~200 之間'); return; }
+  showToast('⏳ 正在生成 PDF...');
+
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+
+  const { jsPDF } = window.jspdf;
+  const labelW=38, labelH=30, cols=4, rows=8, perPage=cols*rows;
+  const marginX=10, marginY=10, gapX=4, gapY=4;
+  const pdfDoc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+
+  const qrDiv = document.createElement('div');
+  qrDiv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(qrDiv);
+
+  for(let i=0;i<qty;i++) {
+    const num  = startNum + i;
+    const code = cellId + '-' + String(num).padStart(digits,'0');
+    const posInPage = i % perPage;
+    if(i>0 && posInPage===0) pdfDoc.addPage();
+    const col = posInPage % cols;
+    const row = Math.floor(posInPage / cols);
+    const x = marginX + col*(labelW+gapX);
+    const y = marginY + row*(labelH+gapY);
+
+    qrDiv.innerHTML = '';
+    await new Promise(res=>{
+      new QRCode(qrDiv,{text:code,width:128,height:128,correctLevel:QRCode.CorrectLevel.M});
+      setTimeout(res,60);
+    });
+    const canvas = qrDiv.querySelector('canvas');
+    if(canvas) {
+      const imgData = canvas.toDataURL('image/png');
+      const qrSize = labelW - 4;
+      pdfDoc.addImage(imgData,'PNG', x+2, y+1, qrSize, qrSize);
+    }
+    pdfDoc.setFontSize(5.5);
+    pdfDoc.setFont('helvetica','bold');
+    pdfDoc.text(code, x+labelW/2, y+labelH-2, {align:'center'});
+  }
+  document.body.removeChild(qrDiv);
+
+  // 更新列印紀錄
+  const owner = getOwnerByCell(cellId);
+  if(owner) {
+    const records = JSON.parse(JSON.stringify(owner.printRecords||{}));
+    records[cellId] = {
+      lastNum: startNum+qty-1,
+      lastPrintAt: new Date().toISOString(),
+      totalPrinted: (records[cellId]?.totalPrinted||0)+qty
+    };
+    await updateDoc(doc(db,'owners',owner.id),{printRecords:records});
+  }
+
+  const fname = 'CLK-條碼-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf';
+  pdfDoc.save(fname);
+  showToast('✅ PDF 已下載，共 '+qty+' 張條碼');
+  renderPrintRecords();
+};
+
+function renderPrintRecords() {
+  const el = document.getElementById('print-records-list');
+  if(!el) return;
+  const rows = [];
+  getAllCells().forEach(c=>{
+    const owner = allOwners[c.ownerId];
+    if(owner?.inactive) return;
+    const rec = (owner?.printRecords||{})[c.cellId];
+    if(rec) rows.push({cellId:c.cellId, ownerName:c.ownerName, ...rec});
+  });
+  if(rows.length===0){
+    el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div>';
+    return;
+  }
+  el.innerHTML = rows.map(r=>{
+    const dt = r.lastPrintAt ? new Date(r.lastPrintAt).toLocaleDateString('zh-TW') : '';
+    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-weight:600;">${r.cellId} <span style="font-size:12px;color:var(--text2);">${r.ownerName}</span></div>
+        <div style="font-size:12px;color:var(--text2);">最後印到 <strong>${r.lastNum}</strong> 號・${dt}・累計 ${r.totalPrinted} 張</div>
+      </div>
+      <div style="font-size:13px;color:var(--accent);">下次從 <strong>${r.lastNum+1}</strong> 開始</div>
+    </div>`;
+  }).join('');
+}
+
+
 let toastTimer;
 window.showToast = function(msg,dur=2500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
 </script>
