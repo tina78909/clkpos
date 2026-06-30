@@ -2828,8 +2828,8 @@ window.generateBarcodePDF = async function() {
 
   const { jsPDF } = window.jspdf;
 
-  // 每張標籤獨立一頁，尺寸 25x25mm（標籤機可自行縮放）
-  const pageW = 25, pageH = 30;
+  // 每張標籤獨立一頁，尺寸 25x35mm（加高讓文字有空間）
+  const pageW = 25, pageH = 35;
 
   const qrDiv = document.createElement('div');
   qrDiv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
@@ -2861,14 +2861,14 @@ window.generateBarcodePDF = async function() {
     const canvas = qrDiv.querySelector('canvas');
     if(canvas) {
       const imgData = canvas.toDataURL('image/png');
-      const qrSize = pageW - 2; // QR code 佔滿頁面寬度，留1mm邊距
+      const qrSize = pageW - 2;
       pdfDoc.addImage(imgData, 'PNG', 1, 1, qrSize, qrSize);
     }
 
     // 條碼文字在下方
-    pdfDoc.setFontSize(4.5);
+    pdfDoc.setFontSize(9);
     pdfDoc.setFont('helvetica', 'bold');
-    pdfDoc.text(code, pageW / 2, pageH - 1.5, { align: 'center' });
+    pdfDoc.text(code, pageW / 2, pageH - 2, { align: 'center' });
   }
 
   document.body.removeChild(qrDiv);
