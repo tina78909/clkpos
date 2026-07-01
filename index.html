@@ -1502,7 +1502,6 @@ function renderProductsList() {
 
 function buildProductActionBtns(p) {
   const isBlindbox = p.subType === 'blindbox';
-  const isOwner = p.type === 'owner';
   let btns = '';
   if(isBlindbox) {
     if(p.status==='active') {
@@ -1511,10 +1510,11 @@ function buildProductActionBtns(p) {
       btns += '<button class="btn btn-xs" style="background:rgba(67,233,123,.2);color:var(--accent3);" data-action-pid="'+p.id+'" data-action="online">▶ 重新上架</button>';
     }
   } else if(p.status==='active') {
-    // 一番賞進行中才有廢套
     btns += '<button class="btn btn-xs" style="background:#4a1c1c;color:#ff9999;border:1px solid #ff6b6b;" data-action-pid="'+p.id+'" data-action="scrap">🗑️ 廢套</button>';
+  } else if(p.status==='completed') {
+    // 已完刮：可撤銷恢復進行中
+    btns += '<button class="btn btn-xs" style="background:rgba(108,143,255,.2);color:var(--accent);" data-action-pid="'+p.id+'" data-action="revert">↩️ 撤銷完刮</button>';
   }
-  // 刪除按鈕已在外層統一加，這裡不再加
   return btns;
 }
 
@@ -2057,6 +2057,11 @@ window.openProductActionModal = async function(productId, action) {
       '<div class="alert alert-warning">此商品將從清單中隱藏（'+statusText+'），所有帳務紀錄永久保留，可在報表中查閱。</div>';
     reasonGroup.style.display='none';
     footer.innerHTML = cancelBtn + '<button class="btn btn-warning" id="action-confirm-btn">確認隱藏</button>';
+  } else if(action==='revert') {
+    document.getElementById('product-action-body').innerHTML =
+      '<div class="alert alert-warning">⚠️ 撤銷後此刮板將恢復為「進行中」，可繼續登帳。相關交易的結算標記也會一併清除。</div>';
+    reasonGroup.style.display='none';
+    footer.innerHTML = cancelBtn + '<button class="btn btn-primary" id="action-confirm-btn">↩️ 確認撤銷完刮</button>';
   } else { // scrap
     const feeInfo = owner
       ? '格主可得：<strong>$'+Math.round(confirmedAmt*(1-fee)).toLocaleString()+'</strong>（手續費 '+Math.round(fee*100)+'% = $'+Math.round(confirmedAmt*fee).toLocaleString()+'）'
@@ -2083,7 +2088,23 @@ window.openProductActionModal = async function(productId, action) {
 window.execProductAction = async function(productId, action) {
   const p = allProducts[productId]; if(!p) return;
   const reason = document.getElementById('product-action-reason').value.trim();
-  if(action==='online') {
+  if(action==='revert') {
+    // 撤銷完刮：恢復進行中，清除結算標記
+    await updateDoc(doc(db,'products',productId),{
+      status:'active',
+      completedAt:null,
+      finalAmount:null,
+      discountReason:null
+    });
+    // 把相關交易的 batchCompleted 清掉
+    const revertTxs = allTxs.filter(tx=>tx.productId===productId && tx.batchCompleted);
+    await Promise.all(revertTxs.map(tx=>updateDoc(doc(db,'transactions',tx.id),{
+      batchCompleted:false,
+      finalAmount:null,
+      completedAt:null
+    })));
+    showToast('↩️ 已撤銷完刮，刮板恢復進行中');
+  } else if(action==='online') {
     await updateDoc(doc(db,'products',productId),{status:'active'});
     showToast('▶ 商品已重新上架');
   } else if(action==='offline') {
