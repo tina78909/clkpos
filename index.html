@@ -509,6 +509,13 @@ select option{background:var(--surface2);}
       <div class="card">
         <div class="card-header"><div class="card-title">⚙️ 列印設定</div></div>
         <div class="field-group">
+          <label class="field-label">類型</label>
+          <div class="toggle-group" style="margin-bottom:8px;">
+            <button class="toggle-btn active" id="print-type-owner" onclick="switchPrintType('owner',this)">格主格子</button>
+            <button class="toggle-btn" id="print-type-store" onclick="switchPrintType('store',this)">店內格子</button>
+          </div>
+        </div>
+        <div class="field-group">
           <label class="field-label">選擇格子</label>
           <select id="print-cell-select" style="width:100%;"></select>
         </div>
@@ -631,8 +638,10 @@ select option{background:var(--surface2);}
         </select>
       </div>
       <div class="field-group" id="cell-select-group">
-        <label class="field-label">所屬格子</label>
-        <select id="product-cell-id"></select>
+        <label class="field-label">所屬格子 <span style="color:var(--text3);font-size:11px;">（店內商品選填）</span></label>
+        <select id="product-cell-id">
+          <option value="">無格子（店內通用）</option>
+        </select>
       </div>
     </div>
     <div class="form-row" id="product-draws-row">
@@ -1091,6 +1100,22 @@ window.renderRecentTx = function() {
 
 
 // ===== HELPER: 透過格子找格主 =====
+function guessCellFromBarcode(barcode) {
+  // 嘗試從條碼前綴找對應格子
+  // 格式：CELLID-數字，如 A001-0000000001
+  const parts = barcode.split('-');
+  if(parts.length < 2) return null;
+  const prefix = parts[0]; // 取第一段作為格子前綴
+  // 先找格主格子
+  const allCells = getAllCells();
+  const matched = allCells.find(c => c.cellId === prefix);
+  if(matched) return {cellId: matched.cellId, type: 'owner', ownerId: matched.ownerId};
+  // 再找店內格子（有設定 storeCellId 的商品）
+  const storeMatch = Object.values(allProducts).find(p=>p.storeCellId===prefix&&p.type==='store');
+  if(storeMatch) return {cellId: prefix, type: 'store', ownerId: null};
+  return null;
+}
+
 function getOwnerByCell(cellId) {
   return Object.values(allOwners).find(o=>(o.cells||[]).includes(cellId)) || null;
 }
@@ -1297,7 +1322,7 @@ function populateCellSelects() {
 }
 
 // ===== PRODUCT CRUD =====
-window.openNewProductModal = function(prefillBarcode='') {
+window.openNewProductModal = function(prefillBarcode='', prefixCell=null) {
   document.getElementById('new-product-modal-title').textContent='📦 新增商品';
   document.getElementById('editing-product-id').value='';
   document.getElementById('product-barcode').value=prefillBarcode;
@@ -1307,6 +1332,19 @@ window.openNewProductModal = function(prefillBarcode='') {
   document.getElementById('product-type').value='lottery';
   document.getElementById('price-tiers').innerHTML=`<div class="tier-row"><span class="tier-label">抽</span><input type="number" placeholder="3" class="tier-qty" min="2"><span class="tier-label">元</span><input type="number" placeholder="1000" class="tier-price"><button class="btn btn-danger btn-xs" onclick="removeTier(this)">✕</button></div>`;
   onProductTypeChange();
+  // 自動帶入辨識到的格子資訊
+  if(prefixCell) {
+    if(prefixCell.type==='owner') {
+      document.getElementById('product-type').value='owner';
+      onProductTypeChange();
+      setTimeout(()=>{ document.getElementById('product-cell-id').value=prefixCell.cellId; },50);
+    } else {
+      document.getElementById('product-type').value='lottery';
+      onProductTypeChange();
+      setTimeout(()=>{ document.getElementById('product-cell-id').value=prefixCell.cellId; },50);
+    }
+    showToast('💡 已自動辨識格子：'+prefixCell.cellId);
+  }
   openModal('modal-new-product');
 };
 
@@ -1356,10 +1394,13 @@ window.saveProduct = async function() {
   const productType = (type==='owner') ? 'owner' : 'store'; // 統一 store/owner
   const subType = isBlindbox ? 'blindbox' : 'lottery'; // 細分類型
   const finalBarcode = barcode || ('NOCODE-'+Date.now());
+  // 店內商品也可以有格子編號（用於標籤辨識）
+  const storeCellId = productType==='store' ? (cellId||null) : null;
   const data={
     barcode: finalBarcode, name,
     type: productType, subType,
-    cellId: type==='owner' ? cellId : null,
+    cellId: productType==='owner' ? cellId : storeCellId,
+    storeCellId: storeCellId,
     ownerId: owner ? owner.id : null,
     totalDraws: isBlindbox ? null : totalDraws,
     unitPrice, currentPrice: unitPrice, tiers: isBlindbox ? [] : tiers,
@@ -1599,7 +1640,12 @@ function loadScript(src){return new Promise((res,rej)=>{if(document.querySelecto
 window.lookupBarcode = async function() {
   const barcode=document.getElementById('manual-barcode').value.trim(); if(!barcode) return;
   const found=Object.values(allProducts).find(p=>p.barcode===barcode);
-  if(!found){showToast('⚠️ 條碼未啟用，請建立商品');openNewProductModal(barcode);return;}
+  if(!found){
+    // 首次掃碼：自動從前綴辨識格子
+    const prefixCell = guessCellFromBarcode(barcode);
+    openNewProductModal(barcode, prefixCell);
+    return;
+  }
 
   // 狀態檢查：已完刮/廢套/下架不允許登帳
   if(found.status==='completed'){
@@ -2800,9 +2846,20 @@ function loadLabelScript(src) {
 window.initPrintPage = function() {
   const sel = document.getElementById('print-cell-select');
   if(!sel) return;
-  const cells = getAllCells().filter(c => !allOwners[c.ownerId]?.inactive);
+  const ownerCells = getAllCells().filter(c => !allOwners[c.ownerId]?.inactive);
+  // 取得有格子編號的店內商品的格子
+  const storeCells = [...new Set(
+    Object.values(allProducts)
+      .filter(p=>p.type==='store' && p.storeCellId && !p.deleted)
+      .map(p=>p.storeCellId)
+  )].sort();
   sel.innerHTML = '<option value="">請選擇格子...</option>'
-    + cells.map(c=>`<option value="${c.cellId}" data-oid="${c.ownerId}">${c.cellId}（${c.ownerName}）</option>`).join('');
+    + '<optgroup label="── 格主格子 ──">'
+    + ownerCells.map(c=>`<option value="${c.cellId}" data-type="owner" data-oid="${c.ownerId}">${c.cellId}（${c.ownerName}）</option>`).join('')
+    + '</optgroup>'
+    + (storeCells.length ? '<optgroup label="── 店內格子 ──">'
+    + storeCells.map(c=>`<option value="${c}" data-type="store">${c}（店內）</option>`).join('')
+    + '</optgroup>' : '');
   sel.onchange = window.onPrintCellChange;
   document.getElementById('print-start-num').oninput = window.updatePrintPreview;
   document.getElementById('print-qty').oninput = window.updatePrintPreview;
@@ -2844,21 +2901,21 @@ window.generateBarcodePDF = async function() {
   if(qty<1||qty>200){ showToast('數量需在 1~200 之間'); return; }
   showToast('⏳ 正在生成 PDF...');
 
-  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
   await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js');
 
   const { jsPDF } = window.jspdf;
 
-  // 每張標籤獨立一頁，尺寸 25x35mm（加高讓文字有空間）
-  const pageW = 25, pageH = 35;
+  // 標籤尺寸：寬40mm 高20mm（條碼比QR碼矮）
+  const pageW = 40, pageH = 20;
 
-  const qrDiv = document.createElement('div');
-  qrDiv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
-  document.body.appendChild(qrDiv);
+  // 建立離屏 canvas 用來產生 Code128 條碼
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:fixed;left:-9999px;';
+  document.body.appendChild(canvas);
 
-  // 建立 PDF，第一頁先不加（addPage 前已有第一頁）
   const pdfDoc = new jsPDF({
-    orientation: 'portrait',
+    orientation: 'landscape',
     unit: 'mm',
     format: [pageW, pageH]
   });
@@ -2867,48 +2924,65 @@ window.generateBarcodePDF = async function() {
     const num  = startNum + i;
     const code = cellId + '-' + String(num).padStart(digits, '0');
 
-    if(i > 0) pdfDoc.addPage([pageW, pageH]);
+    if(i > 0) pdfDoc.addPage([pageW, pageH], 'landscape');
 
-    // 生成 QR code
-    qrDiv.innerHTML = '';
-    await new Promise(res => {
-      new QRCode(qrDiv, {
-        text: code, width: 256, height: 256,
-        correctLevel: QRCode.CorrectLevel.M
+    // 用 JsBarcode 畫到 canvas
+    try {
+      JsBarcode(canvas, code, {
+        format: 'CODE128',
+        width: 2,
+        height: 60,
+        displayValue: true,
+        fontSize: 14,
+        fontOptions: 'bold',
+        margin: 5,
+        background: '#ffffff',
+        lineColor: '#000000'
       });
-      setTimeout(res, 80);
-    });
-
-    const canvas = qrDiv.querySelector('canvas');
-    if(canvas) {
-      const imgData = canvas.toDataURL('image/png');
-      const qrSize = pageW - 2;
-      pdfDoc.addImage(imgData, 'PNG', 1, 1, qrSize, qrSize);
+    } catch(e) {
+      console.error('條碼生成失敗:', code, e);
+      continue;
     }
 
-    // 條碼文字在下方
-    pdfDoc.setFontSize(9);
-    pdfDoc.setFont('helvetica', 'bold');
-    pdfDoc.text(code, pageW / 2, pageH - 2, { align: 'center' });
+    // 將 canvas 轉為圖片加入 PDF
+    const imgData = canvas.toDataURL('image/png');
+    // 置中放入頁面
+    pdfDoc.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
   }
 
-  document.body.removeChild(qrDiv);
+  document.body.removeChild(canvas);
 
   // 更新列印紀錄
-  const owner = getOwnerByCell(cellId);
-  if(owner) {
-    const records = JSON.parse(JSON.stringify(owner.printRecords||{}));
-    records[cellId] = {
+  const optGroup = document.getElementById('print-cell-select');
+  const selOpt = optGroup.options[optGroup.selectedIndex];
+  const isOwnerCell = selOpt?.dataset?.type !== 'store';
+  if(isOwnerCell) {
+    const owner = getOwnerByCell(cellId);
+    if(owner) {
+      const records = JSON.parse(JSON.stringify(owner.printRecords||{}));
+      records[cellId] = {
+        lastNum: startNum + qty - 1,
+        lastPrintAt: new Date().toISOString(),
+        totalPrinted: (records[cellId]?.totalPrinted||0) + qty
+      };
+      await updateDoc(doc(db,'owners',owner.id), {printRecords: records});
+    }
+  } else {
+    // 店內格子：存在 config 裡
+    const configRef = doc(db,'config','storePrintRecords');
+    const snap = await getDoc(configRef);
+    const existing = snap.exists() ? snap.data() : {};
+    existing[cellId] = {
       lastNum: startNum + qty - 1,
       lastPrintAt: new Date().toISOString(),
-      totalPrinted: (records[cellId]?.totalPrinted||0) + qty
+      totalPrinted: (existing[cellId]?.totalPrinted||0) + qty
     };
-    await updateDoc(doc(db,'owners',owner.id), {printRecords: records});
+    await setDoc(configRef, existing);
   }
 
   const fname = 'CLK-條碼-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf';
   pdfDoc.save(fname);
-  showToast('✅ PDF 已下載，共 '+qty+' 頁（每張一頁）');
+  showToast('✅ PDF 已下載，共 '+qty+' 頁');
   renderPrintRecords();
 };
 
@@ -2923,6 +2997,12 @@ function renderPrintRecords() {
     const rec = (owner?.printRecords||{})[c.cellId];
     if(rec) rows.push({cellId:c.cellId, ownerName:c.ownerName, ...rec});
   });
+  // 也顯示店內格子紀錄（從 allStorePrintRecords 快取）
+  if(window._storePrintRecords) {
+    Object.entries(window._storePrintRecords).forEach(([cellId, rec])=>{
+      rows.push({cellId, ownerName:'店內', ...rec});
+    });
+  }
   if(rows.length===0){
     el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div>';
     return;
