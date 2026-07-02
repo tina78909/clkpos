@@ -534,9 +534,9 @@ select option{background:var(--surface2);}
         <div class="field-group">
           <label class="field-label">流水號位數</label>
           <select id="print-digits">
-            <option value="5">5位數（如 A01-00001）</option>
+            <option value="5" selected>5位數（如 A01-00001）</option>
             <option value="8">8位數（如 A01-00000001）</option>
-            <option value="10" selected>10位數（如 A01-0000000001）</option>
+            <option value="10">10位數（如 A01-0000000001）</option>
           </select>
         </div>
         <div id="print-sample" class="alert alert-info mt-8" style="font-family:monospace;font-size:13px;"></div>
@@ -2991,66 +2991,73 @@ window.generateBarcodePDF = async function() {
   const cellId   = document.getElementById('print-cell-select').value;
   const startNum = parseInt(document.getElementById('print-start-num').value)||1;
   const qty      = parseInt(document.getElementById('print-qty').value)||1;
-  const digits   = parseInt(document.getElementById('print-digits').value)||10;
+  const digits   = parseInt(document.getElementById('print-digits').value)||5;
   if(!cellId){ showToast('請先選擇格子'); return; }
-  if(qty<1||qty>200){ showToast('數量需在 1~200 之間'); return; }
+  if(qty<1||qty>500){ showToast('數量需在 1~500 之間'); return; }
   showToast('⏳ 正在生成 PDF...');
 
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
   await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-  await loadScript('https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js');
 
   const { jsPDF } = window.jspdf;
 
-  // 標籤尺寸：寬40mm 高20mm（條碼比QR碼矮）
-  const pageW = 40, pageH = 20;
+  // 標籤尺寸：30x15mm（橫向）
+  const pageW = 30, pageH = 15;
 
-  // 建立離屏 canvas 用來產生 Code128 條碼
-  const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'position:fixed;left:-9999px;';
-  document.body.appendChild(canvas);
+  const qrDiv = document.createElement('div');
+  qrDiv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(qrDiv);
 
   const pdfDoc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
-    format: [pageW, pageH]
+    format: [pageH, pageW]  // jsPDF landscape 時寬高互換
   });
 
   for(let i=0; i<qty; i++) {
     const num  = startNum + i;
     const code = cellId + '-' + String(num).padStart(digits, '0');
 
-    if(i > 0) pdfDoc.addPage([pageW, pageH], 'landscape');
+    if(i > 0) pdfDoc.addPage([pageH, pageW], 'landscape');
 
-    // 用 JsBarcode 畫到 canvas
-    try {
-      JsBarcode(canvas, code, {
-        format: 'CODE128',
-        width: 2,
-        height: 60,
-        displayValue: true,
-        fontSize: 14,
-        fontOptions: 'bold',
-        margin: 5,
-        background: '#ffffff',
-        lineColor: '#000000'
+    // QR Code 生成
+    qrDiv.innerHTML = '';
+    await new Promise(res => {
+      new QRCode(qrDiv, {
+        text: code,
+        width: 256, height: 256,
+        correctLevel: QRCode.CorrectLevel.M
       });
-    } catch(e) {
-      console.error('條碼生成失敗:', code, e);
-      continue;
+      setTimeout(res, 60);
+    });
+
+    const canvas = qrDiv.querySelector('canvas');
+    if(canvas) {
+      const imgData = canvas.toDataURL('image/png');
+      // QR code 放左邊，正方形 13x13mm
+      const qrSize = 13;
+      pdfDoc.addImage(imgData, 'PNG', 1, 1, qrSize, qrSize);
     }
 
-    // 將 canvas 轉為圖片加入 PDF
-    const imgData = canvas.toDataURL('image/png');
-    // 置中放入頁面
-    pdfDoc.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
+    // 條碼文字放右側
+    pdfDoc.setFontSize(5);
+    pdfDoc.setFont('helvetica', 'bold');
+    // 分兩行顯示（前綴 + 流水號）
+    const parts = code.split('-');
+    const prefix = parts[0];
+    const serial = parts.slice(1).join('-');
+    pdfDoc.text(prefix, 15.5, 6, { align: 'left' });
+    pdfDoc.setFontSize(7);
+    pdfDoc.text(serial, 15.5, 11, { align: 'left' });
   }
 
-  document.body.removeChild(canvas);
+  document.body.removeChild(qrDiv);
 
   // 更新列印紀錄
-  const optGroup = document.getElementById('print-cell-select');
-  const selOpt = optGroup.options[optGroup.selectedIndex];
+  const selEl = document.getElementById('print-cell-select');
+  const selOpt = selEl?.options[selEl.selectedIndex];
   const isOwnerCell = selOpt?.dataset?.type !== 'store';
+
   if(isOwnerCell) {
     const owner = getOwnerByCell(cellId);
     if(owner) {
@@ -3063,19 +3070,21 @@ window.generateBarcodePDF = async function() {
       await updateDoc(doc(db,'owners',owner.id), {printRecords: records});
     }
   } else {
-    // 店內格子：存在 config 裡
-    const configRef = doc(db,'config','storePrintRecords');
+    const configRef = doc(db,'config','storeCells');
     const snap = await getDoc(configRef);
     const existing = snap.exists() ? snap.data() : {};
-    existing[cellId] = {
+    if(!existing[cellId]) existing[cellId] = {cellId, name:cellId, printRecords:{}};
+    existing[cellId].printRecords = existing[cellId].printRecords || {};
+    existing[cellId].printRecords[cellId] = {
       lastNum: startNum + qty - 1,
       lastPrintAt: new Date().toISOString(),
-      totalPrinted: (existing[cellId]?.totalPrinted||0) + qty
+      totalPrinted: (existing[cellId].printRecords[cellId]?.totalPrinted||0) + qty
     };
     await setDoc(configRef, existing);
+    allStoreCells = existing;
   }
 
-  const fname = 'CLK-條碼-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf';
+  const fname = 'CLK-QR-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf';
   pdfDoc.save(fname);
   showToast('✅ PDF 已下載，共 '+qty+' 頁');
   renderPrintRecords();
