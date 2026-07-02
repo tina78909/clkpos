@@ -388,6 +388,7 @@ select option{background:var(--surface2);}
         <div class="tab-group">
           <button class="tab-btn active" id="owner-tab-active" onclick="switchOwnerTab('active',this)">現有格主</button>
           <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
+          <button class="tab-btn" id="owner-tab-store" onclick="switchOwnerTab('store',this)">🏬 店內格子</button>
         </div>
         <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
       </div>
@@ -746,6 +747,29 @@ select option{background:var(--surface2);}
   </div>
 </div>
 
+<!-- STORE CELL -->
+<div class="modal-overlay" id="modal-store-cell">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">🏬 新增店內格子</div>
+      <button class="modal-close" onclick="closeModal('modal-store-cell')">✕</button>
+    </div>
+    <div class="alert alert-info">店內格子用於標籤印製與條碼辨識，不綁定格主</div>
+    <div class="field-group">
+      <label class="field-label">格子編號（如 B01）</label>
+      <input type="text" id="store-cell-id-input" placeholder="B01" style="text-transform:uppercase;">
+    </div>
+    <div class="field-group">
+      <label class="field-label">格子名稱（選填，如 扭蛋區）</label>
+      <input type="text" id="store-cell-name-input" placeholder="扭蛋區">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-store-cell')">取消</button>
+      <button class="btn btn-primary" onclick="saveStoreCell()">儲存</button>
+    </div>
+  </div>
+</div>
+
 <!-- LIGHTNING -->
 <div class="modal-overlay" id="modal-lightning">
   <div class="modal">
@@ -863,6 +887,7 @@ onAuthStateChanged(auth, user => {
 // ===== INIT =====
 async function initApp() {
   await loadOwners();
+  await loadStoreCells();
   await loadProducts();
   await loadAllTxs();
   renderDashboard();
@@ -1110,9 +1135,8 @@ function guessCellFromBarcode(barcode) {
   const allCells = getAllCells();
   const matched = allCells.find(c => c.cellId === prefix);
   if(matched) return {cellId: matched.cellId, type: 'owner', ownerId: matched.ownerId};
-  // 再找店內格子（有設定 storeCellId 的商品）
-  const storeMatch = Object.values(allProducts).find(p=>p.storeCellId===prefix&&p.type==='store');
-  if(storeMatch) return {cellId: prefix, type: 'store', ownerId: null};
+  // 再找店內格子（從 allStoreCells）
+  if(allStoreCells[prefix]) return {cellId: prefix, type: 'store', ownerId: null};
   return null;
 }
 
@@ -1227,13 +1251,86 @@ window.reactivateOwner = async function(ownerId) {
 };
 
 let ownerTab = 'active';
+let allStoreCells = {}; // { cellId: {cellId, name, printRecords} }
 
 window.switchOwnerTab = function(tab, el) {
   ownerTab = tab;
   document.querySelectorAll('#page-owners .tab-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
-  renderOwnersList();
+  // 新增格主按鈕只在格主頁籤顯示
+  const addBtn = document.querySelector('#page-owners .btn-primary');
+  if(addBtn) addBtn.style.display = tab==='store' ? 'none' : '';
+  if(tab==='store') renderStoreCellsList();
+  else renderOwnersList();
 };
+
+// ===== 店內格子 CRUD =====
+async function loadStoreCells() {
+  try {
+    const snap = await getDoc(doc(db,'config','storeCells'));
+    if(snap.exists()) allStoreCells = snap.data();
+  } catch(e) { allStoreCells = {}; }
+}
+
+window.openAddStoreCellModal = function() {
+  document.getElementById('store-cell-id-input').value = '';
+  document.getElementById('store-cell-name-input').value = '';
+  openModal('modal-store-cell');
+};
+
+window.saveStoreCell = async function() {
+  const cellId = document.getElementById('store-cell-id-input').value.trim().toUpperCase();
+  const name   = document.getElementById('store-cell-name-input').value.trim();
+  if(!cellId){ showToast('請填寫格子編號'); return; }
+  // 確認不重複
+  if(allStoreCells[cellId]){ showToast('此格子編號已存在'); return; }
+  const ownerCells = getAllCells().map(c=>c.cellId);
+  if(ownerCells.includes(cellId)){ showToast('此格子編號已被格主使用'); return; }
+  allStoreCells[cellId] = {cellId, name: name||cellId, printRecords:{}};
+  await setDoc(doc(db,'config','storeCells'), allStoreCells);
+  closeModal('modal-store-cell');
+  showToast('✅ 店內格子已新增');
+  renderStoreCellsList();
+  populateCellSelects();
+};
+
+window.deleteStoreCell = async function(cellId) {
+  if(!confirm(`確定要刪除店內格子「${cellId}」？`)) return;
+  delete allStoreCells[cellId];
+  await setDoc(doc(db,'config','storeCells'), allStoreCells);
+  showToast('🗑️ 已刪除');
+  renderStoreCellsList();
+  populateCellSelects();
+};
+
+function renderStoreCellsList() {
+  const el = document.getElementById('owners-list');
+  const cells = Object.values(allStoreCells);
+  if(cells.length===0){
+    el.innerHTML = '<div class="empty-state"><div class="icon">🏬</div><p>尚無店內格子</p></div>'
+      + '<div style="text-align:center;margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="openAddStoreCellModal()">＋ 新增店內格子</button></div>';
+    return;
+  }
+  el.innerHTML = '<div style="text-align:right;margin-bottom:12px;"><button class="btn btn-primary btn-sm" onclick="openAddStoreCellModal()">＋ 新增店內格子</button></div>'
+    + cells.map(c=>{
+    const rec = c.printRecords || {};
+    const lastPrint = Object.values(rec).length > 0
+      ? '最後印到 '+Math.max(...Object.values(rec).map(r=>r.lastNum||0))+' 號'
+      : '尚未印製';
+    return `<div class="owner-card">
+      <div class="owner-card-header">
+        <div>
+          <div style="font-size:16px;font-weight:700;">${c.cellId} <span style="font-size:13px;color:var(--text2);">${c.name!==c.cellId?c.name:''}</span></div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">🏬 店內格子・${lastPrint}</div>
+        </div>
+        <button class="btn btn-danger btn-sm" data-del-store-cell="${c.cellId}">🗑️ 刪除</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-del-store-cell]').forEach(btn=>{
+    btn.addEventListener('click',()=>deleteStoreCell(btn.dataset.delStoreCell));
+  });
+}
 
 window.editOwner = async function(ownerId) {
   const o = allOwners[ownerId]; if(!o) return;
@@ -1295,9 +1392,12 @@ function renderOwnersList() {
 
 function populateCellSelects() {
   const cells = getAllCells();
-  const cellHtml = cells.map(c=>`<option value="${c.cellId}">${c.cellId}（${c.ownerName}）</option>`).join('');
+  const storeCellList = Object.values(allStoreCells);
+  const cellHtml = '<option value="">無格子</option>'
+    + cells.map(c=>`<option value="${c.cellId}">${c.cellId}（${c.ownerName}）</option>`).join('')
+    + (storeCellList.length ? storeCellList.map(c=>`<option value="${c.cellId}">${c.cellId}（店內）</option>`).join('') : '');
   ['product-cell-id','lightning-cell-id'].forEach(id=>{
-    const el=document.getElementById(id); if(el) el.innerHTML=cellHtml||'<option value="">（請先新增格主與格子）</option>';
+    const el=document.getElementById(id); if(el) el.innerHTML=cellHtml;
   });
   // 格主篩選下拉（商品管理 + 快速選品）
   const owners = Object.values(allOwners).filter(o=>!o.inactive); // 只顯示現有格主
@@ -1394,13 +1494,13 @@ window.saveProduct = async function() {
   const productType = (type==='owner') ? 'owner' : 'store'; // 統一 store/owner
   const subType = isBlindbox ? 'blindbox' : 'lottery'; // 細分類型
   const finalBarcode = barcode || ('NOCODE-'+Date.now());
-  // 店內商品也可以有格子編號（用於標籤辨識）
+  // 店內商品格子編號
   const storeCellId = productType==='store' ? (cellId||null) : null;
   const data={
     barcode: finalBarcode, name,
     type: productType, subType,
     cellId: productType==='owner' ? cellId : storeCellId,
-    storeCellId: storeCellId,
+    storeCellId: productType==='store' ? storeCellId : null,
     ownerId: owner ? owner.id : null,
     totalDraws: isBlindbox ? null : totalDraws,
     unitPrice, currentPrice: unitPrice, tiers: isBlindbox ? [] : tiers,
@@ -2847,18 +2947,13 @@ window.initPrintPage = function() {
   const sel = document.getElementById('print-cell-select');
   if(!sel) return;
   const ownerCells = getAllCells().filter(c => !allOwners[c.ownerId]?.inactive);
-  // 取得有格子編號的店內商品的格子
-  const storeCells = [...new Set(
-    Object.values(allProducts)
-      .filter(p=>p.type==='store' && p.storeCellId && !p.deleted)
-      .map(p=>p.storeCellId)
-  )].sort();
+  const storeCellsArr = Object.values(allStoreCells);
   sel.innerHTML = '<option value="">請選擇格子...</option>'
-    + '<optgroup label="── 格主格子 ──">'
+    + (ownerCells.length ? '<optgroup label="── 格主格子 ──">'
     + ownerCells.map(c=>`<option value="${c.cellId}" data-type="owner" data-oid="${c.ownerId}">${c.cellId}（${c.ownerName}）</option>`).join('')
-    + '</optgroup>'
-    + (storeCells.length ? '<optgroup label="── 店內格子 ──">'
-    + storeCells.map(c=>`<option value="${c}" data-type="store">${c}（店內）</option>`).join('')
+    + '</optgroup>' : '')
+    + (storeCellsArr.length ? '<optgroup label="── 店內格子 ──">'
+    + storeCellsArr.map(c=>`<option value="${c.cellId}" data-type="store">${c.cellId}（店內${c.name!==c.cellId?' '+c.name:''}）</option>`).join('')
     + '</optgroup>' : '');
   sel.onchange = window.onPrintCellChange;
   document.getElementById('print-start-num').oninput = window.updatePrintPreview;
