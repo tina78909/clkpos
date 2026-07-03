@@ -990,6 +990,14 @@ async function initApp() {
 }
 
 function setupRealtimeListeners() {
+  // 支出即時監聽
+  onSnapshot(query(collection(db,'expenses'), orderBy('expenseDate','desc')), snap => {
+    allExpenses = [];
+    snap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
+    renderDashboard();
+    renderExpenseList();
+  });
+
   onSnapshot(query(collection(db,'transactions'), orderBy('createdAt','desc')), snap => {
     allTxs = []; snap.forEach(d => allTxs.push({id:d.id,...d.data()}));
     renderDashboard(); renderRecentTx();
@@ -2610,18 +2618,14 @@ window.submitExpense = async function() {
   document.getElementById('expense-item').value='';
   document.getElementById('expense-note').value='';
   showToast('✅ 支出已記錄');
-  await loadExpenses();
-  renderExpenseList();
-  renderDashboard();
+  // onSnapshot 會自動更新，不需手動載入
 };
 
 window.deleteExpense = async function(expId) {
   if(!confirm('確定要刪除這筆支出？')) return;
   await deleteDoc(doc(db,'expenses',expId));
-  allExpenses = allExpenses.filter(e=>e.id!==expId);
-  renderExpenseList();
-  renderDashboard();
   showToast('🗑️ 已刪除');
+  // onSnapshot 會自動更新
 };
 
 function populateExpenseMonthFilter() {
