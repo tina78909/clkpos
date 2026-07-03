@@ -3210,8 +3210,45 @@ window.downloadReport = async function() {
 };
 
 
+function populateReportMonths() {
+  const yearSel  = document.getElementById('report-year');
+  const monthSel = document.getElementById('report-month-only');
+  if(!yearSel || !monthSel) return;
+  const now = new Date();
+  if(!yearSel.options.length) {
+    for(let y=now.getFullYear(); y>=now.getFullYear()-4; y--){
+      yearSel.innerHTML += `<option value="${y}">${y}年</option>`;
+    }
+  }
+  if(!monthSel.options.length) {
+    for(let m=1;m<=12;m++){
+      monthSel.innerHTML += `<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
+    }
+  }
+}
+
+function populateExpenseMonthFilter() {
+  const sel = document.getElementById('expense-month-filter');
+  if(!sel) return;
+  const now = new Date();
+  const curVal = sel.value;
+  sel.innerHTML = '<option value="">全部</option>';
+  for(let i=0;i<12;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    sel.innerHTML += `<option value="${val}" ${val===curVal?'selected':''}>${d.getFullYear()}年${d.getMonth()+1}月</option>`;
+  }
+  if(!curVal) {
+    // 預設本月
+    const defVal = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    sel.value = defVal;
+  }
+}
+
+
 let toastTimer;
 window.showToast = function(msg,dur=2500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
+nt=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
 </script>
 </body>
 </html>
