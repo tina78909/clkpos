@@ -48,8 +48,9 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .topnav-right{display:flex;align-items:center;gap:12px;}
 .user-badge{font-size:12px;color:var(--text2);background:var(--surface2);padding:4px 10px;border-radius:20px;border:1px solid var(--border);}
 .user-badge.boss{border-color:var(--owner);color:var(--owner);}
-.bottomnav{background:var(--surface);border-top:1px solid var(--border);display:flex;position:fixed;bottom:0;left:0;right:0;z-index:100;height:60px;}
-.bottomnav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--text3);font-size:10px;transition:color .2s;border:none;background:none;}
+.bottomnav{background:var(--surface);border-top:1px solid var(--border);display:flex;position:fixed;bottom:0;left:0;right:0;z-index:100;height:60px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.bottomnav::-webkit-scrollbar{display:none;}
+.bottomnav-item{min-width:64px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--text3);font-size:10px;transition:color .2s;border:none;background:none;}
 .bottomnav-item.active{color:var(--accent);}
 .bottomnav-item svg{width:20px;height:20px;}
 .main-content{flex:1;padding:20px;padding-bottom:80px;max-width:1200px;margin:0 auto;width:100%;}
@@ -390,7 +391,8 @@ select option{background:var(--surface2);}
           <button class="tab-btn" id="owner-tab-inactive" onclick="switchOwnerTab('inactive',this)">已退租</button>
           <button class="tab-btn" id="owner-tab-store" onclick="switchOwnerTab('store',this)">🏬 店內格子</button>
         </div>
-        <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
+        <div id="lease-expiry-alert" class="hidden"></div>
+      <div id="owners-list"><div class="empty-state"><div class="icon">🏪</div><p>尚無格主</p></div></div>
       </div>
 
       <!-- 標籤列印頁籤 -->
@@ -548,6 +550,54 @@ select option{background:var(--surface2);}
       </div>
     </div>
 
+    <!-- EXPENSE -->
+    <div id="page-expense" class="page">
+      <div class="section-title">💸 支出記錄</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">➕ 新增支出</div></div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">金額</label>
+            <input type="number" id="expense-amount" placeholder="0" min="1">
+          </div>
+          <div class="field-group">
+            <label class="field-label">類別</label>
+            <select id="expense-category">
+              <option value="salary">工讀生費用</option>
+              <option value="shipping">運費</option>
+              <option value="purchase">進貨</option>
+              <option value="rent">店租水電</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">品項說明</label>
+          <input type="text" id="expense-item" placeholder="例：6月工讀生薪資">
+        </div>
+        <div class="field-group">
+          <label class="field-label">支出日期</label>
+          <input type="date" id="expense-date" style="width:100%;">
+        </div>
+        <div class="field-group">
+          <label class="field-label">備註（選填）</label>
+          <input type="text" id="expense-note" placeholder="補充說明...">
+        </div>
+        <button class="btn btn-danger btn-full mt-8" onclick="submitExpense()">記錄支出</button>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 支出紀錄</div>
+          <select id="expense-month-filter" style="font-size:13px;padding:6px 10px;width:auto;" onchange="renderExpenseList()"></select>
+        </div>
+        <div id="expense-list"><div class="empty-state"><div class="icon">💸</div><p>尚無支出記錄</p></div></div>
+        <div style="padding:12px 0;border-top:1px solid var(--border);margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--text2);">篩選月份支出合計</span>
+          <span style="font-size:20px;font-weight:700;color:var(--danger);" id="expense-total-amount">$0</span>
+        </div>
+      </div>
+    </div>
+
     <div id="page-boss" class="page">
       <div class="section-title">👑 老闆專區 <span class="sub">待核帳管理</span></div>
       <div class="card">
@@ -583,6 +633,9 @@ select option{background:var(--surface2);}
     </button>
     <button class="bottomnav-item" id="boss-nav-btn" onclick="switchPage('boss',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21,13.89 7,23 12,20 17,23 15.79,13.88"/></svg><span>老闆</span>
+    </button>
+    <button class="bottomnav-item" onclick="switchPage('expense',this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span>支出</span>
     </button>
   </nav>
 
@@ -634,7 +687,6 @@ select option{background:var(--surface2);}
         <label class="field-label">類型</label>
         <select id="product-type" onchange="onProductTypeChange()">
           <option value="lottery">🎴 店內一番賞／刮刮</option>
-          <option value="blindbox">📦 店內盲盒</option>
           <option value="owner">🏪 格主一番賞</option>
         </select>
       </div>
@@ -774,22 +826,61 @@ select option{background:var(--surface2);}
 <div class="modal-overlay" id="modal-lightning">
   <div class="modal">
     <div class="modal-header"><div class="modal-title">⚡ 閃電登帳</div><button class="modal-close" onclick="closeModal('modal-lightning')">✕</button></div>
-    <div class="alert alert-info">現場臨時開板 + 包板完刮，自動跳過掃碼建檔</div>
-    <div class="form-row">
-      <div class="field-group">
-        <label class="field-label">類型</label>
-        <select id="lightning-type" onchange="toggleLightningOwner()"><option value="store">店內</option><option value="owner">格主</option></select>
+    <div class="field-group">
+      <label class="field-label">登帳類型</label>
+      <select id="lightning-type" onchange="onLightningTypeChange()">
+        <option value="store_scratch">🎴 店內刮板（臨時開板）</option>
+        <option value="store_item">🛍️ 店內商品（盲盒/小賞等）</option>
+        <option value="rent">🏠 格子租金</option>
+        <option value="owner">🏪 格主刮板（臨時開板）</option>
+      </select>
+    </div>
+
+    <!-- 店內刮板 -->
+    <div id="lightning-scratch-section">
+      <div class="form-row">
+        <div class="field-group"><label class="field-label">單抽售價</label><input type="number" id="lightning-price" placeholder="350"></div>
+        <div class="field-group"><label class="field-label">總刮數</label><input type="number" id="lightning-draws" placeholder="40"></div>
       </div>
-      <div class="field-group" id="lightning-owner-group">
+      <div class="field-group"><label class="field-label">實收金額</label><input type="number" id="lightning-amount" placeholder="自動計算..."></div>
+    </div>
+
+    <!-- 店內商品 -->
+    <div id="lightning-item-section" class="hidden">
+      <div class="field-group"><label class="field-label">金額</label><input type="number" id="lightning-item-amount" placeholder="0"></div>
+      <div class="field-group"><label class="field-label">商品備註（如：盲盒/娃娃機/小賞）</label><input type="text" id="lightning-item-note" placeholder="商品名稱或說明"></div>
+    </div>
+
+    <!-- 格子租金 -->
+    <div id="lightning-rent-section" class="hidden">
+      <div class="field-group">
+        <label class="field-label">格主</label>
+        <select id="lightning-rent-owner"></select>
+      </div>
+      <div class="field-group">
+        <label class="field-label">格子</label>
+        <select id="lightning-rent-cell"></select>
+      </div>
+      <div class="field-group"><label class="field-label">租金金額</label><input type="number" id="lightning-rent-amount" placeholder="0"></div>
+      <div class="form-row">
+        <div class="field-group"><label class="field-label">承租起日</label><input type="date" id="lightning-rent-start" style="width:100%;"></div>
+        <div class="field-group"><label class="field-label">承租迄日</label><input type="date" id="lightning-rent-end" style="width:100%;"></div>
+      </div>
+    </div>
+
+    <!-- 格主刮板 -->
+    <div id="lightning-owner-section" class="hidden">
+      <div class="field-group">
         <label class="field-label">所屬格子</label>
         <select id="lightning-cell-id"></select>
       </div>
+      <div class="form-row">
+        <div class="field-group"><label class="field-label">單抽售價</label><input type="number" id="lightning-owner-price" placeholder="350"></div>
+        <div class="field-group"><label class="field-label">總刮數</label><input type="number" id="lightning-owner-draws" placeholder="40"></div>
+      </div>
+      <div class="field-group"><label class="field-label">實收金額</label><input type="number" id="lightning-owner-amount" placeholder="自動計算..."></div>
     </div>
-    <div class="form-row">
-      <div class="field-group"><label class="field-label">單抽售價</label><input type="number" id="lightning-price" placeholder="350"></div>
-      <div class="field-group"><label class="field-label">總刮數</label><input type="number" id="lightning-draws" placeholder="40"></div>
-    </div>
-    <div class="field-group"><label class="field-label">實收金額</label><input type="number" id="lightning-amount" placeholder="自動計算..."></div>
+
     <div class="field-group">
       <label class="field-label">付款方式</label>
       <select id="lightning-payment" onchange="toggleLightningTransfer()"><option value="cash">現金</option><option value="transfer">轉帳</option></select>
@@ -800,10 +891,9 @@ select option{background:var(--surface2);}
         <label class="confirm-check-label"><input type="checkbox" id="lightning-transfer-confirmed"><span style="font-size:14px;">✅ 已當場確認客人轉帳成功</span></label>
       </div>
     </div>
-    <div class="field-group"><label class="field-label">備註（可留空）</label><input type="text" id="lightning-note"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-lightning')">取消</button>
-      <button class="btn btn-warning" onclick="submitLightning()">⚡ 閃電完刮</button>
+      <button class="btn btn-warning" onclick="submitLightning()">⚡ 確認登帳</button>
     </div>
   </div>
 </div>
@@ -941,6 +1031,7 @@ window.switchPage = function(page, el) {
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
   if(page==='print') initPrintPage();
+  if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); }
 };
 window.switchToPick = function() {
   dashboardMode = 'pick';
@@ -1027,8 +1118,16 @@ async function renderDashboard() {
   });
   const pendingTotal = pending.reduce((s,tx) => s+(tx.amount||0),0);
 
+  // 計算本期支出
+  const periodExpenses = allExpenses.filter(e=>{
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    return dt >= startDate && dt < endDate;
+  });
+  const totalExpense = periodExpenses.reduce((s,e)=>s+(e.amount||0), 0);
+  const netRevenue = Math.round(storeRevenue) - totalExpense;
+
   document.getElementById('stat-total').textContent = '$'+totalRev.toLocaleString();
-  document.getElementById('stat-store').textContent = '$'+Math.round(storeRevenue).toLocaleString();
+  document.getElementById('stat-store').textContent = '$'+netRevenue.toLocaleString()+(totalExpense>0?' (扣支出$'+totalExpense.toLocaleString()+')':'');
   document.getElementById('stat-pending').textContent = '$'+pendingTotal.toLocaleString();
   document.getElementById('stat-count').textContent = filtered.length;
 
@@ -1388,6 +1487,7 @@ function renderOwnersList() {
   el.querySelectorAll('[data-reactivate-oid]').forEach(btn=>{
     btn.addEventListener('click', ()=>reactivateOwner(btn.dataset.reactivateOid));
   });
+  checkLeaseExpiry();
 }
 
 function populateCellSelects() {
@@ -2314,442 +2414,158 @@ window.toggleLightningOwner = function() {
 window.toggleLightningTransfer = function() {
   document.getElementById('lightning-transfer-section').classList.toggle('hidden',document.getElementById('lightning-payment').value!=='transfer');
 };
+window.onLightningTypeChange = function() {
+  const type = document.getElementById('lightning-type').value;
+  document.getElementById('lightning-scratch-section').classList.toggle('hidden', type!=='store_scratch');
+  document.getElementById('lightning-item-section').classList.toggle('hidden', type!=='store_item');
+  document.getElementById('lightning-rent-section').classList.toggle('hidden', type!=='rent');
+  document.getElementById('lightning-owner-section').classList.toggle('hidden', type!=='owner');
+  // 租金：填入格主選單
+  if(type==='rent') populateLightningRentOwner();
+};
+
+window.populateLightningRentOwner = function() {
+  const ownerSel = document.getElementById('lightning-rent-owner');
+  const owners = Object.values(allOwners).filter(o=>!o.inactive);
+  ownerSel.innerHTML = owners.map(o=>`<option value="${o.id}">${o.name}</option>`).join('');
+  populateLightningRentCell();
+  ownerSel.onchange = populateLightningRentCell;
+};
+
+window.populateLightningRentCell = function() {
+  const ownerId = document.getElementById('lightning-rent-owner').value;
+  const owner = allOwners[ownerId];
+  const cellSel = document.getElementById('lightning-rent-cell');
+  cellSel.innerHTML = (owner?.cells||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
+};
+
+window.openLightningModal = function() {
+  document.getElementById('lightning-type').value = 'store_scratch';
+  onLightningTypeChange();
+  ['lightning-price','lightning-draws','lightning-amount','lightning-note',
+   'lightning-transfer-code','lightning-item-amount','lightning-item-note',
+   'lightning-rent-amount','lightning-rent-start','lightning-rent-end',
+   'lightning-owner-price','lightning-owner-draws','lightning-owner-amount'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
+  if(document.getElementById('lightning-transfer-confirmed')) document.getElementById('lightning-transfer-confirmed').checked=false;
+  document.getElementById('lightning-transfer-section').classList.add('hidden');
+  document.getElementById('lightning-payment').value='cash';
+  // 預設日期為今天
+  const today = new Date().toISOString().split('T')[0];
+  const rentStart = document.getElementById('lightning-rent-start');
+  if(rentStart) rentStart.value = today;
+  openModal('modal-lightning');
+};
+
 window.submitLightning = async function() {
-  const type=document.getElementById('lightning-type').value;
-  const cellId=document.getElementById('lightning-cell-id').value;
-  const price=parseFloat(document.getElementById('lightning-price').value);
-  const draws=parseInt(document.getElementById('lightning-draws').value);
-  const amount=parseFloat(document.getElementById('lightning-amount').value)||(price*draws);
-  const payment=document.getElementById('lightning-payment').value;
-  const transferConfirmed=document.getElementById('lightning-transfer-confirmed')?.checked;
-  const note=document.getElementById('lightning-note').value.trim();
-  if(!price||!draws){showToast('請填寫單價與刮數');return;}
-  const paymentStatus=(payment!=='transfer'||transferConfirmed)?'confirmed':'pending';
-  const owner=type==='owner'?getOwnerByCell(cellId):null;
-  const prodRef=await addDoc(collection(db,'products'),{barcode:'LIGHTNING-'+Date.now(),name:`閃電登帳 ${new Date().toLocaleDateString('zh-TW')}`,type,cellId:type==='owner'?cellId:null,ownerId:owner?owner.id:null,totalDraws:draws,unitPrice:price,currentPrice:price,tiers:[],drawnCount:draws,status:'completed',totalRevenue:paymentStatus==='confirmed'?amount:0,finalAmount:amount,createdAt:serverTimestamp(),completedAt:serverTimestamp(),isLightning:true});
-  await addDoc(collection(db,'transactions'),{productId:prodRef.id,productName:'閃電登帳',productType:type,cellId:type==='owner'?cellId:null,ownerId:owner?owner.id:null,qty:draws,amount,paymentMethod:payment,paymentStatus,transferCode:payment==='transfer'?document.getElementById('lightning-transfer-code').value:'',batchCompleted:paymentStatus==='confirmed',finalAmount:amount,note,createdAt:serverTimestamp(),createdBy:currentUser.uid,createdByEmail:currentUser.email,isLightning:true});
-  closeModal('modal-lightning'); showToast('⚡ 閃電登帳完成！');
-};
-
-// ===== TRANSFER (BOSS) =====
-async function renderTransferList() {
-  const txs=allTxs.filter(tx=>tx.paymentStatus==='pending').sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  document.getElementById('transfer-count-badge').textContent=txs.length+'筆待核';
-  const el=document.getElementById('transfer-list');
-  if(txs.length===0){el.innerHTML='<div class="empty-state"><div class="icon">✅</div><p>目前無待核帳轉帳</p></div>';return;}
-  el.innerHTML=txs.map(tx=>{
-    const dt=tx.createdAt?tx.createdAt.toDate().toLocaleString('zh-TW'):'';
-    return `<div class="transfer-card">
-      <div class="flex-between">
-        <div><div class="transfer-code">${tx.transferCode||'（無備註）'}</div><div style="font-size:12px;color:var(--text2);margin-top:4px;">${tx.productName||''} · ${dt}</div><div style="font-size:11px;color:var(--text3);">👤 ${tx.createdByEmail||''}</div></div>
-        <div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:var(--warning);">$${(tx.amount||0).toLocaleString()}</div><button class="btn btn-success btn-xs mt-8" onclick="confirmTransfer('${tx.id}','${tx.productId||''}',${tx.amount||0})">✅ 確認入帳</button></div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-window.confirmTransfer = async function(txId,productId,amount) {
-  await updateDoc(doc(db,'transactions',txId),{
-    paymentStatus:'confirmed', confirmedAt:serverTimestamp(), confirmedBy:currentUser.email
-  });
-
-  const prod = productId ? allProducts[productId] : null;
-  if(prod) {
-    await updateDoc(doc(db,'products',productId),{totalRevenue:(prod.totalRevenue||0)+amount});
-
-    // 若商品已完刮/廢套，且此筆確認後「所有交易都已確認」→ 補標記 batchCompleted
-    if(prod.status==='completed'||prod.status==='scrapped') {
-      // 取得這張刮板最新的所有交易（含剛確認這筆）
-      const boardTxs = allTxs.filter(tx=>tx.productId===productId);
-      const stillPending = boardTxs.filter(tx=>tx.paymentStatus==='pending'&&tx.id!==txId);
-      if(stillPending.length===0) {
-        // 全部都確認了！重新計算 finalAmount 並標記所有交易
-        const totalConfirmed = boardTxs.reduce((s,tx)=>s+(tx.id===txId?amount:(tx.paymentStatus==='confirmed'?tx.amount:0)),0);
-        await updateDoc(doc(db,'products',productId),{finalAmount:totalConfirmed});
-        const notBatched = boardTxs.filter(tx=>!tx.batchCompleted);
-        await Promise.all(notBatched.map(tx=>updateDoc(doc(db,'transactions',tx.id),{
-          batchCompleted:true, finalAmount:totalConfirmed, completedAt:serverTimestamp()
-        })));
-        showToast('✅ 已確認入帳，刮板所有款項已清，下期結帳日自動撥款給格主');
-      } else {
-        showToast('✅ 已確認入帳，仍有 '+stillPending.length+' 筆待核帳，整板繼續暫緩');
-      }
-    } else {
-      showToast('✅ 已確認入帳');
-    }
-  } else {
-    showToast('✅ 已確認入帳');
-  }
-  renderTransferList();
-};
-
-// ===== BARCODE RECORDS =====
-
-
-// ===== REPORT =====
-let currentSettleDay = 1;
-
-window.switchSettleDay = function(day, el) {
-  currentSettleDay = day;
-  document.querySelectorAll('#page-report .toggle-btn').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active');
-  renderSettlementBoard();
-};
-
-window.renderSettlementBoard = function() {
-  const el = document.getElementById('settlement-board');
-  if(!el) return;
+  const type    = document.getElementById('lightning-type').value;
+  const payment = document.getElementById('lightning-payment').value;
+  const transferConfirmed = document.getElementById('lightning-transfer-confirmed')?.checked;
+  const paymentStatus = (payment!=='transfer'||transferConfirmed) ? 'confirmed' : 'pending';
+  const transferCode  = document.getElementById('lightning-transfer-code').value.trim();
   const now = new Date();
-  const day = currentSettleDay;
 
-  // 初始化年月選單（只做一次）
-  const yearSel  = document.getElementById('settle-year');
-  const monthSel = document.getElementById('settle-month');
-  if(yearSel && !yearSel.options.length) {
-    for(let y=now.getFullYear(); y>=now.getFullYear()-3; y--)
-      yearSel.innerHTML += `<option value="${y}">${y}年</option>`;
-  }
-  if(monthSel && !monthSel.options.length) {
-    for(let m=1;m<=12;m++)
-      monthSel.innerHTML += `<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
-  }
+  if(type==='store_item') {
+    // 店內商品登帳
+    const amount = parseFloat(document.getElementById('lightning-item-amount').value);
+    const note   = document.getElementById('lightning-item-note').value.trim();
+    if(!amount||amount<=0){showToast('請填寫金額');return;}
+    await addDoc(collection(db,'transactions'),{
+      productId:null, productName: note||'店內商品',
+      productType:'store', cellId:null, ownerId:null,
+      qty:1, amount, paymentMethod:payment, paymentStatus,
+      transferCode: payment==='transfer'?transferCode:null,
+      note, batchCompleted:paymentStatus==='confirmed',
+      finalAmount: paymentStatus==='confirmed'?amount:null,
+      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdByEmail:currentUser.email, isLightning:true, lightningType:'store_item'
+    });
+    closeModal('modal-lightning');
+    showToast('✅ 店內商品登帳完成');
 
-  // 讀取選擇的年月（結帳日所在的年月）
-  const selYear  = parseInt(yearSel?.value  || now.getFullYear());
-  const selMonth = parseInt(monthSel?.value || (now.getMonth()+1)); // 1-based
+  } else if(type==='rent') {
+    // 格子租金
+    const ownerId  = document.getElementById('lightning-rent-owner').value;
+    const cellId   = document.getElementById('lightning-rent-cell').value;
+    const amount   = parseFloat(document.getElementById('lightning-rent-amount').value);
+    const rentStart= document.getElementById('lightning-rent-start').value;
+    const rentEnd  = document.getElementById('lightning-rent-end').value;
+    if(!ownerId||!amount||!rentStart||!rentEnd){showToast('請填寫完整租金資訊');return;}
+    const owner = allOwners[ownerId];
+    const note  = `格子租金 ${cellId} (${rentStart}~${rentEnd})`;
+    // 儲存租約資訊到 owner（用於到期通知）
+    const leases = JSON.parse(JSON.stringify(owner.leases||{}));
+    leases[cellId] = {cellId, rentStart, rentEnd, amount, updatedAt: new Date().toISOString()};
+    await updateDoc(doc(db,'owners',ownerId),{leases});
+    await addDoc(collection(db,'transactions'),{
+      productId:null, productName:'格子租金',
+      productType:'store', cellId, ownerId,
+      qty:1, amount, paymentMethod:payment, paymentStatus,
+      transferCode: payment==='transfer'?transferCode:null,
+      note, batchCompleted:true, finalAmount:amount,
+      rentStart, rentEnd,
+      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdByEmail:currentUser.email, isLightning:true, lightningType:'rent'
+    });
+    closeModal('modal-lightning');
+    showToast('✅ 格子租金登帳完成');
 
-  // 正確的結帳週期：
-  // 1號結帳日（selYear/selMonth/1 結帳）→ 帳務期間：前一個月1號～前一個月最後一天
-  // 15號結帳日（selYear/selMonth/15 結帳）→ 帳務期間：前一個月15號～本月14號
-  let periodStart, periodEnd, periodLabel, settleDateLabel;
-  if(day === 1) {
-    // 結帳日：selYear/selMonth/1，帳務：前月1號~前月底
-    const prevYear  = selMonth === 1 ? selYear-1 : selYear;
-    const prevMonth = selMonth === 1 ? 12 : selMonth-1; // 1-based
-    periodStart     = new Date(prevYear, prevMonth-1, 1);
-    periodEnd       = new Date(selYear, selMonth-1, 1); // selMonth/1（不含）
-    const lastDay   = new Date(selYear, selMonth-1, 0).getDate();
-    settleDateLabel = `${selYear}/${selMonth}/1 結帳日`;
-    periodLabel     = `${prevYear}/${prevMonth}/1 ～ ${prevYear}/${prevMonth}/${lastDay}`;
+  } else if(type==='owner') {
+    // 格主刮板
+    const cellId   = document.getElementById('lightning-cell-id').value;
+    const price    = parseFloat(document.getElementById('lightning-owner-price').value);
+    const draws    = parseInt(document.getElementById('lightning-owner-draws').value);
+    const amount   = parseFloat(document.getElementById('lightning-owner-amount').value)||(price*draws);
+    if(!price||!draws){showToast('請填寫單價與刮數');return;}
+    const owner = getOwnerByCell(cellId);
+    const prodRef = await addDoc(collection(db,'products'),{
+      barcode:'LIGHTNING-'+Date.now(), name:'閃電登帳 '+now.toLocaleDateString('zh-TW'),
+      type:'owner', cellId, ownerId:owner?owner.id:null,
+      totalDraws:draws, unitPrice:price, currentPrice:price,
+      tiers:[], drawnCount:draws, status:'completed',
+      totalRevenue:paymentStatus==='confirmed'?amount:0,
+      finalAmount:amount, createdAt:serverTimestamp(), completedAt:serverTimestamp(), isLightning:true
+    });
+    await addDoc(collection(db,'transactions'),{
+      productId:prodRef.id, productName:'閃電登帳',
+      productType:'owner', cellId, ownerId:owner?owner.id:null,
+      qty:draws, amount, paymentMethod:payment, paymentStatus,
+      transferCode:payment==='transfer'?transferCode:null,
+      batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
+      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdByEmail:currentUser.email, isLightning:true, lightningType:'owner'
+    });
+    closeModal('modal-lightning');
+    showToast('⚡ 格主閃電登帳完成！');
+
   } else {
-    // 結帳日：selYear/selMonth/15，帳務：前月15號~本月14號
-    const prevYear  = selMonth === 1 ? selYear-1 : selYear;
-    const prevMonth = selMonth === 1 ? 12 : selMonth-1;
-    periodStart     = new Date(prevYear, prevMonth-1, 15);
-    periodEnd       = new Date(selYear, selMonth-1, 15); // selMonth/15（不含）
-    settleDateLabel = `${selYear}/${selMonth}/15 結帳日`;
-    periodLabel     = `${prevYear}/${prevMonth}/15 ～ ${selYear}/${selMonth}/14`;
-  }
-
-  // 找此結帳日期間完刮、且格主結帳日為 day 的刮板
-  const targetProds = Object.values(allProducts).filter(p => {
-    if(!p.completedAt || p.deleted || p.type!=='owner') return false;
-    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
-    if(ct < periodStart || ct >= periodEnd) return false;
-    const owner = getOwnerByCell(p.cellId);
-    return owner && owner.settleDay === day;
-  });
-
-  if(targetProds.length === 0) {
-    el.innerHTML = `<div class="empty-state"><div class="icon">✅</div><p>此結帳日（${periodLabel}）暫無待撥款項目</p></div>`;
-    return;
-  }
-
-  // 按格主分組
-  const ownerMap = {};
-  targetProds.forEach(prod => {
-    const owner = getOwnerByCell(prod.cellId); if(!owner) return;
-    const boardTxs   = allTxs.filter(tx=>tx.productId===prod.id);
-    const hasPending  = boardTxs.some(tx=>tx.paymentStatus==='pending');
-    const confirmedAmt = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const fee = owner.feeRate/100;
-    if(!ownerMap[owner.id]) ownerMap[owner.id]={owner, boards:[], totalGet:0, hasPendingAny:false};
-    ownerMap[owner.id].boards.push({prod, hasPending, confirmedAmt, ownerGet: hasPending?0:Math.round(confirmedAmt*(1-fee))});
-    if(hasPending) ownerMap[owner.id].hasPendingAny=true;
-    if(!hasPending) ownerMap[owner.id].totalGet += Math.round(confirmedAmt*(1-fee));
-  });
-
-  el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <div><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div><div style="font-size:12px;color:var(--text2);">帳務期間：${periodLabel}</div></div>
-    <button class="btn btn-success btn-sm" onclick="downloadSettlementReport(${day},${selYear},${selMonth})">⬇️ 下載清單</button>
-  </div>`
-    + Object.values(ownerMap).map(({owner, boards, totalGet, hasPendingAny}) => {
-    const boardRows = boards.map(b => {
-      const statusTag = b.hasPending
-        ? '<span class="badge badge-pending" style="font-size:10px;">含待核帳</span>'
-        : '<span class="badge badge-confirmed" style="font-size:10px;">可撥款</span>';
-      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-size:13px;">${b.prod.name||''} <span style="font-size:11px;color:var(--text3);">${b.prod.cellId||''}</span></div>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px;">已確認 $${b.confirmedAmt.toLocaleString()} ${statusTag}</div></div>
-        <div style="font-weight:700;color:${b.hasPending?'var(--text3)':'var(--accent3)'};">${b.hasPending?'暫緩':'$'+b.ownerGet.toLocaleString()}</div>
-      </div>`;
-    }).join('');
-    return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div><div style="font-weight:700;font-size:15px;">${owner.name}</div>
-        <div style="font-size:12px;color:var(--text2);">費率 ${owner.feeRate}%・格子：${(owner.cells||[]).join('、')}</div></div>
-        <div style="text-align:right;">
-          <div style="font-size:18px;font-weight:700;color:${hasPendingAny&&totalGet===0?'var(--warning)':'var(--owner)'};">$${totalGet.toLocaleString()}</div>
-          ${hasPendingAny?'<div style="font-size:11px;color:var(--warning);">部分暫緩</div>':''}
-        </div>
-      </div>
-      ${boardRows}
-    </div>`;
-  }).join('');
-
-  // 綁定下載按鈕事件（避免onclick引號衝突）
-  setTimeout(()=>{
-    const dlBtn = document.getElementById('settle-dl-btn');
-    if(dlBtn) dlBtn.addEventListener('click', ()=>{
-      downloadSettlementReport(
-        parseInt(dlBtn.dataset.day),
-        parseInt(dlBtn.dataset.year),
-        parseInt(dlBtn.dataset.month)
-      );
+    // 店內刮板 (store_scratch)
+    const price  = parseFloat(document.getElementById('lightning-price').value);
+    const draws  = parseInt(document.getElementById('lightning-draws').value);
+    const amount = parseFloat(document.getElementById('lightning-amount').value)||(price*draws);
+    if(!price||!draws){showToast('請填寫單價與刮數');return;}
+    const prodRef = await addDoc(collection(db,'products'),{
+      barcode:'LIGHTNING-'+Date.now(), name:'閃電登帳 '+now.toLocaleDateString('zh-TW'),
+      type:'store', cellId:null, ownerId:null,
+      totalDraws:draws, unitPrice:price, currentPrice:price,
+      tiers:[], drawnCount:draws, status:'completed',
+      totalRevenue:paymentStatus==='confirmed'?amount:0,
+      finalAmount:amount, createdAt:serverTimestamp(), completedAt:serverTimestamp(), isLightning:true
     });
-  }, 0);
+    await addDoc(collection(db,'transactions'),{
+      productId:prodRef.id, productName:'閃電登帳',
+      productType:'store', cellId:null, ownerId:null,
+      qty:draws, amount, paymentMethod:payment, paymentStatus,
+      transferCode:payment==='transfer'?transferCode:null,
+      batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
+      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdByEmail:currentUser.email, isLightning:true, lightningType:'store_scratch'
+    });
+    closeModal('modal-lightning');
+    showToast('⚡ 店內閃電登帳完成！');
+  }
 };
-
-window.downloadReport = async function() {
-  const year  = parseInt(document.getElementById('report-year')?.value || new Date().getFullYear());
-  const month = parseInt(document.getElementById('report-month-only')?.value || (new Date().getMonth()+1));
-  const monthStr = year+'-'+String(month).padStart(2,'0');
-  const start = new Date(year, month-1, 1);
-  const end   = new Date(year, month, 1);
-
-  showToast('⏳ 正在抓取最新資料...');
-  const [prodSnap, txSnap] = await Promise.all([
-    getDocs(collection(db,'products')),
-    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
-  ]);
-  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
-  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
-
-  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
-  const wb = XLSX.utils.book_new();
-
-  const completedThisMonth = Object.values(allProducts).filter(p => {
-    if(!p.completedAt || p.deleted) return false;
-    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
-    return ct >= start && ct < end && (p.status==='completed' || p.status==='scrapped');
-  });
-
-  const boardSettlements = [];
-  for(const prod of completedThisMonth) {
-    if(prod.type !== 'owner') continue;
-    const owner = getOwnerByCell(prod.cellId); if(!owner) continue;
-    const boardTxs      = allTxs.filter(tx => tx.productId===prod.id);
-    const pendingBoardTxs   = boardTxs.filter(tx => tx.paymentStatus==='pending');
-    const confirmedBoardTxs = boardTxs.filter(tx => tx.paymentStatus==='confirmed');
-    const confirmedTotal = confirmedBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
-    const pendingTotal   = pendingBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
-    const canSettle = pendingBoardTxs.length === 0;
-    boardSettlements.push({product:prod, owner, boardTxs, pendingBoardTxs, confirmedTotal, pendingTotal, canSettle});
-  }
-
-  const allConfirmedThisMonth = allTxs.filter(tx => {
-    const dt = tx.createdAt?.toDate();
-    return dt && dt>=start && dt<end && tx.paymentStatus==='confirmed';
-  });
-  const totalRev = allConfirmedThisMonth.reduce((s,tx)=>s+(tx.amount||0), 0);
-  const storeRev = allConfirmedThisMonth.filter(tx=>tx.productType==='store').reduce((s,tx)=>s+(tx.amount||0), 0);
-  const feeRev   = boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+(b.confirmedTotal*(b.owner.feeRate/100)), 0);
-
-  const ws1 = XLSX.utils.aoa_to_sheet([
-    ['CLK Toys POS 月報表', monthStr],[],
-    ['總營業額（已確認）', Math.round(totalRev)],
-    ['店內收益（含手續費）', Math.round(storeRev + feeRev)],[],
-    ['格主應撥款總額', Math.round(boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+b.confirmedTotal*(1-b.owner.feeRate/100),0))],
-    ['暫緩撥款（含待核帳）', boardSettlements.filter(b=>!b.canSettle).length + ' 張刮板'],
-  ]);
-  XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
-
-  const ownerBoardMap = {};
-  boardSettlements.forEach(b => {
-    if(!ownerBoardMap[b.owner.id]) ownerBoardMap[b.owner.id]={owner:b.owner, canSettle:[], pending:[]};
-    if(b.canSettle) ownerBoardMap[b.owner.id].canSettle.push(b);
-    else ownerBoardMap[b.owner.id].pending.push(b);
-  });
-
-  const ws2data = [];
-  Object.values(ownerBoardMap).forEach(({owner, canSettle, pending}) => {
-    ws2data.push(['【'+owner.name+'】', '費率 '+owner.feeRate+'%', '結帳日：每月'+owner.settleDay+'號', '', '', '']);
-    if(canSettle.length > 0) {
-      ws2data.push(['✅ 本期應撥款', '', '', '', '', '']);
-      ws2data.push(['格子','刮板品名','完刮日','實收金額','手續費('+owner.feeRate+'%)','格主可得']);
-      canSettle.forEach(b => {
-        const ct = b.product.completedAt?.toDate ? b.product.completedAt.toDate() : new Date(b.product.completedAt);
-        const fee = Math.round(b.confirmedTotal * owner.feeRate/100);
-        ws2data.push([b.product.cellId||'', b.product.name||'', ct.toLocaleDateString('zh-TW'), b.confirmedTotal, fee, b.confirmedTotal-fee]);
-      });
-      const tg = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*(1-owner.feeRate/100)),0);
-      const tf = canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*owner.feeRate/100),0);
-      const ta = canSettle.reduce((s,b)=>s+b.confirmedTotal,0);
-      ws2data.push(['合計','','',ta,tf,tg]);
-    }
-    if(pending.length > 0) {
-      ws2data.push(['⏳ 暫緩撥款', '', '', '', '', '']);
-      pending.forEach(b => {
-        ws2data.push([b.product.cellId||'', b.product.name||'', b.confirmedTotal, b.pendingTotal, '待核帳'+b.pendingBoardTxs.length+'筆', '']);
-      });
-    }
-    ws2data.push(['']);
-  });
-  if(ws2data.length===0) ws2data.push(['本月無格主結算項目']);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2data), '格主應撥款');
-
-  const allMonthTxs = allTxs.filter(tx => {
-    const dt = tx.createdAt?.toDate();
-    return dt && dt >= start && dt < end;
-  });
-  const ownerTxMap = {};
-  const storeTxList = [];
-  allMonthTxs.forEach(tx => {
-    if(tx.productType==='owner') {
-      const owner = getOwnerByCell(tx.cellId);
-      const key = owner ? owner.id : 'unknown';
-      if(!ownerTxMap[key]) ownerTxMap[key]={owner, txs:[]};
-      ownerTxMap[key].txs.push(tx);
-    } else { storeTxList.push(tx); }
-  });
-
-  const ws3data = [['日期','商品','格子/類型','格主','抽數','本筆金額','付款','狀態','登帳人','備註']];
-  if(storeTxList.length>0){
-    ws3data.push(['── 店內商品 ──','','','','','','','','','']);
-    storeTxList.forEach(tx=>{
-      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',
-        (tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'')),'店內','',tx.qty||1,tx.amount||0,
-        tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?'已確認':'待核帳',tx.createdByEmail||'',tx.note||'']);
-    });
-    ws3data.push(['']);
-  }
-  Object.values(ownerTxMap).forEach(({owner, txs}) => {
-    ws3data.push(['── '+(owner?owner.name:'未知格主')+' ──','','','','','','','','','']);
-    txs.forEach(tx => {
-      const prod = allProducts[tx.productId];
-      const isCompleted = prod && (prod.status==='completed'||prod.status==='scrapped');
-      const hasPending = isCompleted && allTxs.some(t=>t.productId===tx.productId&&t.paymentStatus==='pending');
-      let remark = tx.note||'';
-      if(!tx.batchCompleted) remark = (remark?remark+'；':'')+'尚未完刮，待完刮後撥款';
-      else if(hasPending) remark = (remark?remark+'；':'')+'刮板含待核帳，下期補發';
-      const txDisplayName = tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
-      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',txDisplayName,tx.cellId||'',
-        owner?.name||'',tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',
-        tx.paymentStatus==='confirmed'?(tx.batchCompleted?'已結算':'已確認'):'待核帳',tx.createdByEmail||'',remark]);
-    });
-    ws3data.push(['']);
-  });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws3data), '交易明細');
-  XLSX.writeFile(wb, 'CLK-POS-'+monthStr+'.xlsx');
-  showToast('📥 報表下載中...');
-};
-
-window.downloadSettlementReport = async function(day, selYear, selMonth) {
-  const now = new Date();
-  selYear  = parseInt(selYear  || now.getFullYear());
-  selMonth = parseInt(selMonth || (now.getMonth()+1));
-  let periodStart, periodEnd, settleDateLabel, periodLabel;
-  if(day === 1) {
-    const prevYear  = selMonth===1 ? selYear-1 : selYear;
-    const prevMonth = selMonth===1 ? 12 : selMonth-1;
-    periodStart     = new Date(prevYear, prevMonth-1, 1);
-    periodEnd       = new Date(selYear,  selMonth-1,  1);
-    const lastDay   = new Date(selYear,  selMonth-1,  0).getDate();
-    settleDateLabel = selYear+'/'+selMonth+'/1 結帳日';
-    periodLabel     = prevYear+'/'+prevMonth+'/1~'+prevYear+'/'+prevMonth+'/'+lastDay;
-  } else {
-    const prevYear  = selMonth===1 ? selYear-1 : selYear;
-    const prevMonth = selMonth===1 ? 12 : selMonth-1;
-    periodStart     = new Date(prevYear, prevMonth-1, 15);
-    periodEnd       = new Date(selYear,  selMonth-1,  15);
-    settleDateLabel = selYear+'/'+selMonth+'/15 結帳日';
-    periodLabel     = prevYear+'/'+prevMonth+'/15~'+selYear+'/'+selMonth+'/14';
-  }
-
-  showToast('⏳ 正在整理資料...');
-
-  // 強制重抓最新資料
-  const [prodSnap, txSnap] = await Promise.all([
-    getDocs(collection(db,'products')),
-    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
-  ]);
-  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
-  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
-
-  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
-  const wb = XLSX.utils.book_new();
-
-  // 找此週期內完刮、且格主結帳日為 day 的刮板
-  const targetProds = Object.values(allProducts).filter(p => {
-    if(!p.completedAt || p.deleted || p.type!=='owner') return false;
-    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
-    if(ct < periodStart || ct >= periodEnd) return false;
-    const owner = getOwnerByCell(p.cellId);
-    return owner && owner.settleDay === day;
-  });
-
-  // 按格主分組
-  const ownerMap = {};
-  targetProds.forEach(prod => {
-    const owner = getOwnerByCell(prod.cellId); if(!owner) return;
-    const boardTxs     = allTxs.filter(tx=>tx.productId===prod.id);
-    const hasPending   = boardTxs.some(tx=>tx.paymentStatus==='pending');
-    const confirmedAmt = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const fee = owner.feeRate/100;
-    if(!ownerMap[owner.id]) ownerMap[owner.id]={owner, boards:[], totalGet:0};
-    const ownerGet = hasPending ? 0 : Math.round(confirmedAmt*(1-fee));
-    ownerMap[owner.id].boards.push({prod, hasPending, confirmedAmt, fee, ownerGet});
-    ownerMap[owner.id].totalGet += ownerGet;
-  });
-
-  // 建立 Excel
-  const wsData = [
-    ['CLK Toys POS - '+settleDateLabel],
-    ['帳務期間：'+periodLabel],
-    []
-  ];
-
-  Object.values(ownerMap).forEach(({owner, boards, totalGet}) => {
-    wsData.push(['【'+owner.name+'】費率 '+owner.feeRate+'%・格子：'+(owner.cells||[]).join('、'),'','','','','']);
-    wsData.push(['格子','刮板品名','完刮日','已確認實收','手續費','格主可得','狀態']);
-    boards.forEach(b => {
-      const ct = b.prod.completedAt?.toDate ? b.prod.completedAt.toDate() : new Date(b.prod.completedAt);
-      wsData.push([
-        b.prod.cellId||'', b.prod.name||'',
-        ct.toLocaleDateString('zh-TW'),
-        b.confirmedAmt,
-        Math.round(b.confirmedAmt*b.fee),
-        b.ownerGet,
-        b.hasPending ? '⏳ 含待核帳（暫緩）' : '✅ 可撥款'
-      ]);
-    });
-    const totalFee = boards.reduce((s,b)=>s+Math.round(b.confirmedAmt*b.fee),0);
-    const totalAmt = boards.reduce((s,b)=>s+b.confirmedAmt,0);
-    wsData.push(['合計','','',totalAmt,totalFee,totalGet,'']);
-    wsData.push([]);
-  });
-
-  if(Object.keys(ownerMap).length===0) wsData.push(['此結帳日無待撥款項目']);
-
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(wsData), settleDateLabel.replace(/\//g,'-'));
-  XLSX.writeFile(wb, 'CLK-結帳-'+settleDateLabel.replace(/\//g,'-')+'.xlsx');
-  showToast('📥 結帳清單下載中...');
-};
-
-function populateReportMonths() {
-  const yearSel  = document.getElementById('report-year');
-  const monthSel = document.getElementById('report-month-only');
-  if(!yearSel||!monthSel) return;
-  const now = new Date();
-  yearSel.innerHTML='';
-  for(let y=now.getFullYear(); y>=now.getFullYear()-4; y--){
-    yearSel.innerHTML+=`<option value="${y}">${y}年</option>`;
-  }
-  monthSel.innerHTML='';
-  for(let m=1;m<=12;m++){
-    monthSel.innerHTML+=`<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
-  }
-}
 
 
 window.openModal = id=>document.getElementById(id).classList.add('open');
@@ -2764,6 +2580,121 @@ window.closeModal = function(id) {
   }
 };
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+
+// ===== 支出功能 =====
+let allExpenses = [];
+
+async function loadExpenses() {
+  const snap = await getDocs(query(collection(db,'expenses'), orderBy('expenseDate','desc')));
+  allExpenses = [];
+  snap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
+}
+
+window.submitExpense = async function() {
+  const amount   = parseFloat(document.getElementById('expense-amount').value);
+  const category = document.getElementById('expense-category').value;
+  const item     = document.getElementById('expense-item').value.trim();
+  const dateVal  = document.getElementById('expense-date').value;
+  const note     = document.getElementById('expense-note').value.trim();
+  if(!amount||amount<=0){showToast('請填寫金額');return;}
+  if(!item){showToast('請填寫品項說明');return;}
+  if(!dateVal){showToast('請選擇日期');return;}
+  const [y,m,d] = dateVal.split('-').map(Number);
+  await addDoc(collection(db,'expenses'),{
+    amount, category, item, note,
+    expenseDate: Timestamp.fromDate(new Date(y,m-1,d,12,0,0)),
+    createdAt: serverTimestamp(),
+    createdBy: currentUser.uid, createdByEmail: currentUser.email
+  });
+  document.getElementById('expense-amount').value='';
+  document.getElementById('expense-item').value='';
+  document.getElementById('expense-note').value='';
+  showToast('✅ 支出已記錄');
+  await loadExpenses();
+  renderExpenseList();
+  renderDashboard();
+};
+
+window.deleteExpense = async function(expId) {
+  if(!confirm('確定要刪除這筆支出？')) return;
+  await deleteDoc(doc(db,'expenses',expId));
+  allExpenses = allExpenses.filter(e=>e.id!==expId);
+  renderExpenseList();
+  renderDashboard();
+  showToast('🗑️ 已刪除');
+};
+
+function populateExpenseMonthFilter() {
+  const sel = document.getElementById('expense-month-filter'); if(!sel) return;
+  const now = new Date();
+  sel.innerHTML = '';
+  for(let i=0;i<12;i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    sel.innerHTML += `<option value="${val}">${d.getFullYear()}年${d.getMonth()+1}月</option>`;
+  }
+}
+
+window.renderExpenseList = function() {
+  const sel = document.getElementById('expense-month-filter');
+  const monthStr = sel?.value || '';
+  const [fy,fm] = monthStr ? monthStr.split('-').map(Number) : [0,0];
+  const filtered = allExpenses.filter(e=>{
+    if(!monthStr) return true;
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    return dt.getFullYear()===fy && dt.getMonth()+1===fm;
+  });
+  const el = document.getElementById('expense-list');
+  const totalEl = document.getElementById('expense-total-amount');
+  const total = filtered.reduce((s,e)=>s+(e.amount||0),0);
+  if(totalEl) totalEl.textContent = '$'+total.toLocaleString();
+  const catMap = {salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+  if(filtered.length===0){el.innerHTML='<div class="empty-state"><div class="icon">💸</div><p>本月無支出記錄</p></div>';return;}
+  el.innerHTML = filtered.map(e=>{
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    return `<div class="tx-item">
+      <div class="tx-header">
+        <div>
+          <span class="badge" style="background:rgba(255,107,107,.15);color:var(--danger);">${catMap[e.category]||e.category}</span>
+          <span style="font-size:13px;margin-left:6px;">${e.item}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:17px;font-weight:700;color:var(--danger);">-$${(e.amount||0).toLocaleString()}</span>
+          <button class="btn btn-ghost btn-xs" data-del-expense="${e.id}">🗑️</button>
+        </div>
+      </div>
+      <div class="tx-meta">
+        <span>${dt.toLocaleDateString('zh-TW')}</span>
+        <span>👤 ${e.createdByEmail||''}</span>
+        ${e.note?`<span>📝 ${e.note}</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-del-expense]').forEach(btn=>{
+    btn.addEventListener('click',()=>deleteExpense(btn.dataset.delExpense));
+  });
+};
+
+// ===== 租約到期通知 =====
+function checkLeaseExpiry() {
+  const now = new Date();
+  const soon = new Date(now); soon.setDate(soon.getDate()+7);
+  const expiring = [];
+  Object.values(allOwners).forEach(o=>{
+    if(o.inactive) return;
+    Object.values(o.leases||{}).forEach(l=>{
+      if(!l.rentEnd) return;
+      const end = new Date(l.rentEnd);
+      if(end >= now && end <= soon) expiring.push({owner:o, lease:l});
+    });
+  });
+  const alertEl = document.getElementById('lease-expiry-alert');
+  if(!alertEl) return;
+  if(expiring.length===0){alertEl.classList.add('hidden');return;}
+  alertEl.classList.remove('hidden');
+  alertEl.innerHTML = `<div class="alert alert-warning">📅 以下格子租約即將到期（7天內），請提醒格主續租：<br>`
+    + expiring.map(({owner,lease})=>`<strong>${owner.name} ${lease.cellId}</strong> 到期日：${lease.rentEnd}`).join('、')+'</div>';
+}
 
 // ===== TOAST =====
 // ===== 標籤列印系統 =====
@@ -3039,16 +2970,15 @@ window.generateBarcodePDF = async function() {
       pdfDoc.addImage(imgData, 'PNG', 1, 1, qrSize, qrSize);
     }
 
-    // 條碼文字放右側
-    pdfDoc.setFontSize(5);
-    pdfDoc.setFont('helvetica', 'bold');
-    // 分兩行顯示（前綴 + 流水號）
+    // 條碼文字放右側（放大2倍）
     const parts = code.split('-');
     const prefix = parts[0];
     const serial = parts.slice(1).join('-');
-    pdfDoc.text(prefix, 15.5, 6, { align: 'left' });
-    pdfDoc.setFontSize(7);
-    pdfDoc.text(serial, 15.5, 11, { align: 'left' });
+    pdfDoc.setFont('helvetica', 'bold');
+    pdfDoc.setFontSize(10);
+    pdfDoc.text(prefix, 15.5, 7, { align: 'left' });
+    pdfDoc.setFontSize(14);
+    pdfDoc.text(serial, 15.5, 13, { align: 'left' });
   }
 
   document.body.removeChild(qrDiv);
@@ -3122,6 +3052,158 @@ function renderPrintRecords() {
     </div>`;
   }).join('');
 }
+
+
+window.downloadReport = async function() {
+  const year  = parseInt(document.getElementById('report-year')?.value || new Date().getFullYear());
+  const month = parseInt(document.getElementById('report-month-only')?.value || (new Date().getMonth()+1));
+  const monthStr = year+'-'+String(month).padStart(2,'0');
+  const start = new Date(year, month-1, 1);
+  const end   = new Date(year, month, 1);
+
+  showToast('⏳ 正在抓取最新資料...');
+  const [prodSnap, txSnap] = await Promise.all([
+    getDocs(collection(db,'products')),
+    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
+  ]);
+  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
+  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
+
+  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+  const wb = XLSX.utils.book_new();
+
+  // 本月已完結刮板
+  const completedThisMonth = Object.values(allProducts).filter(p => {
+    if(!p.completedAt || p.deleted) return false;
+    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
+    return ct >= start && ct < end && (p.status==='completed' || p.status==='scrapped');
+  });
+
+  const boardSettlements = [];
+  for(const prod of completedThisMonth) {
+    if(prod.type !== 'owner') continue;
+    const owner = getOwnerByCell(prod.cellId); if(!owner) continue;
+    const boardTxs      = allTxs.filter(tx => tx.productId===prod.id);
+    const pendingBoardTxs   = boardTxs.filter(tx => tx.paymentStatus==='pending');
+    const confirmedBoardTxs = boardTxs.filter(tx => tx.paymentStatus==='confirmed');
+    const confirmedTotal = confirmedBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const pendingTotal   = pendingBoardTxs.reduce((s,tx)=>s+(tx.amount||0), 0);
+    const canSettle = pendingBoardTxs.length === 0;
+    boardSettlements.push({product:prod, owner, boardTxs, pendingBoardTxs, confirmedTotal, pendingTotal, canSettle});
+  }
+
+  const allConfirmedThisMonth = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt>=start && dt<end && tx.paymentStatus==='confirmed';
+  });
+  const totalRev = allConfirmedThisMonth.reduce((s,tx)=>s+(tx.amount||0), 0);
+  const storeRev = allConfirmedThisMonth.filter(tx=>tx.productType==='store').reduce((s,tx)=>s+(tx.amount||0), 0);
+  const feeRev   = boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+(b.confirmedTotal*(b.owner.feeRate/100)), 0);
+
+  // 支出
+  const monthExpenses = allExpenses.filter(e=>{
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    return dt >= start && dt < end;
+  });
+  const monthExpTotal = monthExpenses.reduce((s,e)=>s+(e.amount||0),0);
+
+  // Sheet1: 月份總覽
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['CLK Toys POS 月報表', monthStr],
+    [],
+    ['總營業額（已確認）', totalRev],
+    ['店內總收益（含格主手續費）', Math.round(storeRev + feeRev)],
+    ['本月支出合計', monthExpTotal],
+    ['店內淨收益（扣支出）', Math.round(storeRev + feeRev) - monthExpTotal],
+    [],
+    ['格主應撥款總額', Math.round(boardSettlements.filter(b=>b.canSettle).reduce((s,b)=>s+b.confirmedTotal*(1-b.owner.feeRate/100),0))],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
+
+  // Sheet2: 格主應撥款
+  const ownerBoardMap = {};
+  boardSettlements.forEach(b => {
+    if(!ownerBoardMap[b.owner.id]) ownerBoardMap[b.owner.id]={owner:b.owner, canSettle:[], pending:[]};
+    if(b.canSettle) ownerBoardMap[b.owner.id].canSettle.push(b);
+    else ownerBoardMap[b.owner.id].pending.push(b);
+  });
+  const ws2data = [];
+  Object.values(ownerBoardMap).forEach(({owner, canSettle, pending}) => {
+    ws2data.push(['【'+owner.name+'】', '費率 '+owner.feeRate+'%', '結帳日：每月'+owner.settleDay+'號', '', '', '']);
+    if(canSettle.length > 0) {
+      ws2data.push(['✅ 本期應撥款', '', '', '', '', '']);
+      ws2data.push(['格子', '刮板品名', '完刮日', '實收金額', '手續費', '格主可得']);
+      canSettle.forEach(b => {
+        const ct = b.product.completedAt?.toDate ? b.product.completedAt.toDate() : new Date(b.product.completedAt);
+        ws2data.push([b.product.cellId||'', b.product.name||'', ct.toLocaleDateString('zh-TW'), b.confirmedTotal, Math.round(b.confirmedTotal*owner.feeRate/100), Math.round(b.confirmedTotal*(1-owner.feeRate/100))]);
+      });
+      const tg=canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*(1-owner.feeRate/100)),0);
+      const tf=canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*owner.feeRate/100),0);
+      const ta=canSettle.reduce((s,b)=>s+b.confirmedTotal,0);
+      ws2data.push(['合計','','',ta,tf,tg]);
+    }
+    if(pending.length > 0) {
+      ws2data.push(['⏳ 暫緩撥款', '', '', '', '', '']);
+      pending.forEach(b => ws2data.push([b.product.cellId||'', b.product.name||'', b.confirmedTotal, b.pendingTotal, '待核帳 '+b.pendingBoardTxs.length+'筆', '']));
+    }
+    ws2data.push(['']);
+  });
+  if(ws2data.length===0) ws2data.push(['本月無格主結算項目']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2data), '格主應撥款');
+
+  // Sheet3: 交易明細
+  const allMonthTxs = allTxs.filter(tx => {
+    const dt = tx.createdAt?.toDate();
+    return dt && dt >= start && dt < end;
+  });
+  const ownerTxMap = {};
+  const storeTxList = [];
+  allMonthTxs.forEach(tx => {
+    if(tx.productType==='owner') {
+      const owner = getOwnerByCell(tx.cellId);
+      const key = owner ? owner.id : 'unknown';
+      if(!ownerTxMap[key]) ownerTxMap[key]={owner, txs:[]};
+      ownerTxMap[key].txs.push(tx);
+    } else { storeTxList.push(tx); }
+  });
+  const ws3data = [['日期','商品','格子/類型','格主','抽數','本筆金額','付款','狀態','登帳人','備註']];
+  if(storeTxList.length>0){
+    ws3data.push(['── 店內 ──','','','','','','','','','']);
+    storeTxList.forEach(tx=>{
+      const displayName = tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'', displayName,'店內','',tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?'已確認':'待核帳',tx.createdByEmail||'',tx.note||'']);
+    });
+    ws3data.push(['']);
+  }
+  Object.values(ownerTxMap).forEach(({owner, txs}) => {
+    ws3data.push(['── '+(owner?owner.name:'未知格主')+' ──','','','','','','','','','']);
+    txs.forEach(tx => {
+      const prod = allProducts[tx.productId];
+      const isCompleted = prod && (prod.status==='completed'||prod.status==='scrapped');
+      const hasPending  = isCompleted && allTxs.some(t=>t.productId===tx.productId&&t.paymentStatus==='pending');
+      let remark = tx.note||'';
+      if(!tx.batchCompleted) remark=(remark?remark+'；':'')+'尚未完刮，待完刮後撥款';
+      else if(hasPending) remark=(remark?remark+'；':'')+'刮板含待核帳，下期補發';
+      const txDisplayName = tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
+      ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'', txDisplayName, tx.cellId||'', owner?.name||'', tx.qty||1, tx.amount||0, tx.paymentMethod==='cash'?'現金':'轉帳', tx.paymentStatus==='confirmed'?(tx.batchCompleted?'已結算':'已確認'):'待核帳', tx.createdByEmail||'', remark]);
+    });
+    ws3data.push(['']);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws3data), '交易明細');
+
+  // Sheet4: 支出明細
+  const catMap = {salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+  const ws4data = [['日期','類別','品項','金額','備註','記錄人']];
+  monthExpenses.forEach(e=>{
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    ws4data.push([dt.toLocaleDateString('zh-TW'), catMap[e.category]||e.category, e.item||'', e.amount||0, e.note||'', e.createdByEmail||'']);
+  });
+  ws4data.push(['合計','','',monthExpTotal,'','']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws4data), '支出明細');
+
+  XLSX.writeFile(wb, 'CLK-POS-'+monthStr+'.xlsx');
+  showToast('📥 報表下載中...');
+};
 
 
 let toastTimer;
