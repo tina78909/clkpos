@@ -1041,6 +1041,7 @@ window.switchPage = function(page, el) {
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
   if(page==='print') initPrintPage();
+  if(page==='expense') { renderExpenseList(); }
   if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); }
 };
 window.switchToPick = function() {
@@ -1465,8 +1466,17 @@ function renderOwnersList() {
       : '<div class="empty-state"><div class="icon">🏪</div><p>尚無格主，點右上角新增</p></div>';
     return;
   }
+  // 租約到期警示（只在現有格主頁籤顯示）
+  let expiryWarning = '';
+  if(!isInactiveTab) {
+    const expiring = checkLeaseExpiry();
+    if(expiring.length > 0) {
+      expiryWarning = '<div class="alert alert-warning" style="margin-bottom:12px;">⏰ 以下格子租約即將到期（7天內）：'
+        + expiring.map(e=>`<strong>${e.owner.name}・${e.cellId}</strong>（${e.endDate}）`).join('、') + '</div>';
+    }
+  }
 
-  el.innerHTML = owners.map(o=>{
+  el.innerHTML = expiryWarning + owners.map(o=>{
     const cells = (o.cells||[]);
     const inactiveDate = o.inactiveAt ? (o.inactiveAt.toDate?o.inactiveAt.toDate():new Date(o.inactiveAt)).toLocaleDateString('zh-TW') : '';
     const btns = isInactiveTab
@@ -3258,6 +3268,124 @@ function populateExpenseMonthFilter() {
 let toastTimer;
 window.showToast = function(msg,dur=2500){const el=document.getElementById('toast');el.textContent=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
 nt=msg;el.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.style.display='none',dur);};
+// ===== 支出功能 =====
+let allExpenses = [];
+
+function setupExpenseListener() {
+  onSnapshot(collection(db,'expenses'), snap => {
+    allExpenses = [];
+    snap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
+    allExpenses.sort((a,b)=>(b.expenseDate||'').localeCompare(a.expenseDate||''));
+    renderExpenseList();
+    renderDashboard();
+  });
+}
+
+window.submitExpense = async function() {
+  const amount   = parseFloat(document.getElementById('expense-amount').value);
+  const category = document.getElementById('expense-category').value;
+  const item     = document.getElementById('expense-item').value.trim();
+  const date     = document.getElementById('expense-date').value;
+  const note     = document.getElementById('expense-note').value.trim();
+  if(!amount||amount<=0){ showToast('請填寫金額'); return; }
+  if(!item){ showToast('請填寫品項說明'); return; }
+  await addDoc(collection(db,'expenses'),{
+    amount, category, item, note,
+    expenseDate: date || new Date().toISOString().split('T')[0],
+    createdAt: serverTimestamp(),
+    createdBy: currentUser.uid, createdByEmail: currentUser.email
+  });
+  document.getElementById('expense-amount').value='';
+  document.getElementById('expense-item').value='';
+  document.getElementById('expense-note').value='';
+  showToast('✅ 支出已記錄');
+};
+
+window.deleteExpense = async function(id) {
+  if(!confirm('確定刪除此支出記錄？')) return;
+  await deleteDoc(doc(db,'expenses',id));
+  showToast('🗑️ 已刪除');
+};
+
+function populateExpenseMonthFilter() {
+  const sel = document.getElementById('expense-month-filter');
+  if(!sel) return;
+  const months = [...new Set(allExpenses.map(e=>e.expenseDate?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部</option>' + months.map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+}
+
+window.renderExpenseList = function() {
+  const sel = document.getElementById('expense-month-filter');
+  populateExpenseMonthFilter();
+  const filter = sel?.value||'';
+  const list = filter ? allExpenses.filter(e=>e.expenseDate?.startsWith(filter)) : allExpenses;
+  const el = document.getElementById('expense-list');
+  if(!el) return;
+  if(list.length===0){ el.innerHTML='<div class="empty-state"><div class="icon">💸</div><p>尚無支出記錄</p></div>'; return; }
+  const catName = {staff:'工讀生',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
+  el.innerHTML = list.map(e=>`<div class="tx-item">
+    <div class="tx-header">
+      <div><span class="badge badge-pending">${catName[e.category]||e.category}</span> <span style="font-size:13px;">${e.item}</span></div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:17px;font-weight:700;color:var(--danger);">-$${(e.amount||0).toLocaleString()}</span>
+        <button class="btn btn-ghost btn-xs" data-del-expense="${e.id}">🗑️</button>
+      </div>
+    </div>
+    <div class="tx-meta"><span>${e.expenseDate||''}</span><span>👤 ${e.createdByEmail||''}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
+  </div>`).join('');
+  el.querySelectorAll('[data-del-expense]').forEach(btn=>{
+    btn.addEventListener('click',()=>deleteExpense(btn.dataset.delExpense));
+  });
+};
+
+// ===== 租約到期提醒 =====
+function checkLeaseExpiry() {
+  const today = new Date();
+  const weekLater = new Date(today.getTime() + 7*24*60*60*1000);
+  const expiring = [];
+  Object.values(allOwners).forEach(owner=>{
+    if(owner.inactive) return;
+    // 找格主的租約紀錄
+    const leases = owner.leases || {};
+    Object.entries(leases).forEach(([cellId, lease])=>{
+      if(!lease.endDate) return;
+      const end = new Date(lease.endDate);
+      if(end >= today && end <= weekLater) {
+        expiring.push({owner, cellId, endDate: lease.endDate});
+      }
+    });
+  });
+  return expiring;
+}
+
+// ===== 閃電登帳類型切換 =====
+window.toggleLightningType = function() {
+  const type = document.getElementById('lightning-type').value;
+  document.getElementById('lightning-lottery-section').style.display = (type==='lottery_store'||type==='lottery_owner') ? '' : 'none';
+  document.getElementById('lightning-owner-group').style.display = type==='lottery_owner' ? '' : 'none';
+  document.getElementById('lightning-store-section').style.display = type==='store_item' ? '' : 'none';
+  document.getElementById('lightning-rent-section').style.display = type==='rent' ? '' : 'none';
+  document.getElementById('lightning-payment-group').style.display = type==='rent' ? 'none' : '';
+  // 租金類型時填充格主和格子選單
+  if(type==='rent') populateLightningRentSelects();
+};
+
+window.toggleLightningOwner = function() { toggleLightningType(); };
+
+function populateLightningRentSelects() {
+  const ownerSel = document.getElementById('lightning-rent-owner');
+  const owners = Object.values(allOwners).filter(o=>!o.inactive);
+  ownerSel.innerHTML = owners.map(o=>`<option value="${o.id}">${o.name}</option>`).join('');
+  ownerSel.onchange = function() {
+    const owner = allOwners[ownerSel.value];
+    const cellSel = document.getElementById('lightning-rent-cell');
+    cellSel.innerHTML = (owner?.cells||[]).map(c=>`<option value="${c}">${c}</option>`).join('');
+  };
+  ownerSel.dispatchEvent(new Event('change'));
+}
+
+
 </script>
 </body>
 </html>
