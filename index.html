@@ -2635,17 +2635,25 @@ window.downloadReport = async function() {
     const dt=tx.createdAt?.toDate(); return dt&&dt>=start&&dt<end&&tx.paymentStatus==='confirmed';
   });
   const totalRev = allConfirmed.reduce((s,tx)=>s+(tx.amount||0),0);
+  // 店內收益計算（與總覽邏輯一致）
   let storeRev=0;
+  // 1. 店內商品直接計入
   allConfirmed.filter(tx=>tx.productType==='store').forEach(tx=>storeRev+=(tx.amount||0));
+  // 2. 格主手續費：只計算「已完刮且無待核帳」的刮板，每張只算一次
   const seenS=new Set();
-  allTxs.filter(tx=>{
-    if(!tx.batchCompleted||tx.productType!=='owner'||tx.finalAmount==null) return false;
-    const p=allProducts[tx.productId]; if(!p) return false;
-    const ct=p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0);
-    return ct>=start&&ct<end;
-  }).forEach(tx=>{
-    if(seenS.has(tx.productId)) return; seenS.add(tx.productId);
-    const o=getOwnerByCell(tx.cellId); storeRev+=(tx.finalAmount||0)*((o?.feeRate||10)/100);
+  Object.values(allProducts).filter(p=>{
+    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt||0);
+    return ct>=start&&ct<end&&(p.status==='completed'||p.status==='scrapped');
+  }).forEach(prod=>{
+    if(seenS.has(prod.id)) return;
+    const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
+    const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
+    if(hasPending) return; // 有待核帳就暫緩，不計手續費
+    seenS.add(prod.id);
+    const confirmedTotal=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    const o=getOwnerByCell(prod.cellId);
+    storeRev+=confirmedTotal*((o?.feeRate||10)/100);
   });
   const toD=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
   const monthExpenses=allExpenses.filter(e=>toD(e.expenseDate).startsWith(monthStr));
