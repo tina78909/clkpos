@@ -983,6 +983,7 @@ async function initApp() {
   renderDashboard();
   populateReportMonths();
   setupRealtimeListeners();
+  setupExpenseListener();
   if(isBoss){ renderTransferList(); }
   // 綁定快速搜尋輸入事件
   const qsEl = document.getElementById('quick-search');
@@ -2585,6 +2586,133 @@ window.submitLightning = async function() {
     closeModal('modal-lightning');
     showToast('⚡ 店內閃電登帳完成！');
   }
+};
+
+
+// ===== 報表月份選單 =====
+function populateReportMonths() {
+  const yearSel  = document.getElementById('report-year');
+  const monthSel = document.getElementById('report-month-only');
+  if(!yearSel||!monthSel) return;
+  const now = new Date();
+  yearSel.innerHTML='';
+  for(let y=now.getFullYear(); y>=now.getFullYear()-4; y--){
+    yearSel.innerHTML+=`<option value="${y}">${y}年</option>`;
+  }
+  monthSel.innerHTML='';
+  for(let m=1;m<=12;m++){
+    monthSel.innerHTML+=`<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
+  }
+}
+
+// ===== 下載報表 =====
+window.downloadReport = async function() {
+  const year  = parseInt(document.getElementById('report-year')?.value || new Date().getFullYear());
+  const month = parseInt(document.getElementById('report-month-only')?.value || (new Date().getMonth()+1));
+  const monthStr = year+'-'+String(month).padStart(2,'0');
+  const start = new Date(year, month-1, 1);
+  const end   = new Date(year, month, 1);
+
+  showToast('⏳ 正在抓取最新資料...');
+  const [prodSnap, txSnap] = await Promise.all([
+    getDocs(collection(db,'products')),
+    getDocs(query(collection(db,'transactions'), orderBy('createdAt','desc')))
+  ]);
+  prodSnap.forEach(d => { allProducts[d.id]={id:d.id,...d.data()}; });
+  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
+
+  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+  const wb = XLSX.utils.book_new();
+
+  // ===== 月份總覽 =====
+  const allConfirmed = allTxs.filter(tx=>{
+    const dt=tx.createdAt?.toDate(); return dt&&dt>=start&&dt<end&&tx.paymentStatus==='confirmed';
+  });
+  const totalRev = allConfirmed.reduce((s,tx)=>s+(tx.amount||0),0);
+  let storeRev=0;
+  allConfirmed.filter(tx=>tx.productType==='store').forEach(tx=>storeRev+=(tx.amount||0));
+  const seenS=new Set();
+  allTxs.filter(tx=>{
+    if(!tx.batchCompleted||tx.productType!=='owner'||tx.finalAmount==null) return false;
+    const p=allProducts[tx.productId]; if(!p) return false;
+    const ct=p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0);
+    return ct>=start&&ct<end;
+  }).forEach(tx=>{
+    if(seenS.has(tx.productId)) return; seenS.add(tx.productId);
+    const o=getOwnerByCell(tx.cellId); storeRev+=(tx.finalAmount||0)*((o?.feeRate||10)/100);
+  });
+  const monthExpenses=allExpenses.filter(e=>{ const d=e.expenseDate||''; return d.startsWith(monthStr); });
+  const totalExp=monthExpenses.reduce((s,e)=>s+(e.amount||0),0);
+
+  const ws1=XLSX.utils.aoa_to_sheet([
+    ['CLK Toys POS 月報表', monthStr],[],
+    ['總營業額（已確認）', totalRev],
+    ['店內收益（含手續費）', Math.round(storeRev)],
+    ['支出合計', totalExp],
+    ['店內淨收益', Math.round(storeRev)-totalExp],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
+
+  // ===== 格主應撥款 =====
+  const completedProds=Object.values(allProducts).filter(p=>{
+    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    return ct>=start&&ct<end;
+  });
+  const ownerBoardMap={};
+  completedProds.forEach(prod=>{
+    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
+    const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
+    const confirmed=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    if(!ownerBoardMap[owner.id]) ownerBoardMap[owner.id]={owner,canSettle:[],pending:[]};
+    const fee=owner.feeRate/100;
+    const item={product:prod,confirmedTotal:confirmed,pendingTotal:boardTxs.filter(tx=>tx.paymentStatus==='pending').reduce((s,tx)=>s+(tx.amount||0),0),canSettle:!hasPending,fee};
+    if(hasPending) ownerBoardMap[owner.id].pending.push(item);
+    else ownerBoardMap[owner.id].canSettle.push(item);
+  });
+  const ws2data=[];
+  Object.values(ownerBoardMap).forEach(({owner,canSettle,pending})=>{
+    ws2data.push(['【'+owner.name+'】','費率 '+owner.feeRate+'%','結帳日：每月'+owner.settleDay+'號','','','']);
+    if(canSettle.length>0){
+      ws2data.push(['✅ 本期應撥款','','','','','']);
+      ws2data.push(['格子','刮板品名','完刮日','實收金額','手續費','格主可得']);
+      canSettle.forEach(b=>{
+        const ct=b.product.completedAt?.toDate?b.product.completedAt.toDate():new Date(b.product.completedAt);
+        ws2data.push([b.product.cellId||'',b.product.name||'',ct.toLocaleDateString('zh-TW'),b.confirmedTotal,Math.round(b.confirmedTotal*b.fee),Math.round(b.confirmedTotal*(1-b.fee))]);
+      });
+      const tg=canSettle.reduce((s,b)=>s+Math.round(b.confirmedTotal*(1-b.fee)),0);
+      ws2data.push(['合計','','','','' ,tg]);
+    }
+    if(pending.length>0){
+      ws2data.push(['⏳ 暫緩撥款','','','','','']);
+      pending.forEach(b=>ws2data.push([b.product.cellId||'',b.product.name||'',b.confirmedTotal,b.pendingTotal,'待核帳','']));
+    }
+    ws2data.push(['']);
+  });
+  if(!ws2data.length) ws2data.push(['本月無格主結算']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws2data), '格主應撥款');
+
+  // ===== 交易明細 =====
+  const allMonthTxs=allTxs.filter(tx=>{ const dt=tx.createdAt?.toDate(); return dt&&dt>=start&&dt<end; });
+  const ws3data=[['日期','商品','格子','格主','抽數','金額','付款','狀態','登帳人','備註']];
+  allMonthTxs.forEach(tx=>{
+    const o=getOwnerByCell(tx.cellId);
+    const name=tx.isLightning?(tx.note||'閃電登帳'):(tx.productName||'');
+    const remark=!tx.batchCompleted&&tx.productType==='owner'?(tx.note?tx.note+'；':'')+'尚未完刮，待完刮後撥款':tx.note||'';
+    ws3data.push([tx.createdAt?.toDate().toLocaleDateString('zh-TW')||'',name,tx.cellId||'',o?.name||'',tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?(tx.batchCompleted?'已結算':'已確認'):'待核帳',tx.createdByEmail||'',remark]);
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws3data), '交易明細');
+
+  // ===== 支出明細 =====
+  const ws4data=[['日期','類別','品項','金額','備註','記錄人']];
+  const catName={staff:'工讀生',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
+  monthExpenses.forEach(e=>ws4data.push([e.expenseDate||'',catName[e.category]||e.category,e.item||'',e.amount||0,e.note||'',e.createdByEmail||'']));
+  ws4data.push(['合計','','',totalExp,'','']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws4data), '支出明細');
+
+  XLSX.writeFile(wb,'CLK-POS-'+monthStr+'.xlsx');
+  showToast('📥 報表下載中...');
 };
 
 
