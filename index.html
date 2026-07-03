@@ -2,8 +2,10 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CLK Toys POS</title>
+<title>CLK Toys POS v3.2</title>
 <style>
 :root {
   --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3250;
@@ -1042,7 +1044,6 @@ window.switchPage = function(page, el) {
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
   if(page==='print') initPrintPage();
-  if(page==='expense') { renderExpenseList(); }
   if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); }
 };
 window.switchToPick = function() {
