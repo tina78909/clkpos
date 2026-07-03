@@ -987,6 +987,11 @@ async function initApp() {
   setupRealtimeListeners();
   setupExpenseListener();
   if(isBoss){ renderTransferList(); }
+  // 支出日期預設今天
+  setTimeout(()=>{
+    const edEl=document.getElementById('expense-date');
+    if(edEl&&!edEl.value) edEl.value=new Date().toISOString().split('T')[0];
+  },500);
   // 綁定快速搜尋輸入事件
   const qsEl = document.getElementById('quick-search');
   if(qsEl) qsEl.addEventListener('input', ()=>window.renderQuickList());
@@ -2642,7 +2647,8 @@ window.downloadReport = async function() {
     if(seenS.has(tx.productId)) return; seenS.add(tx.productId);
     const o=getOwnerByCell(tx.cellId); storeRev+=(tx.finalAmount||0)*((o?.feeRate||10)/100);
   });
-  const monthExpenses=allExpenses.filter(e=>{ const d=e.expenseDate||''; return d.startsWith(monthStr); });
+  const toD=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+  const monthExpenses=allExpenses.filter(e=>toD(e.expenseDate).startsWith(monthStr));
   const totalExp=monthExpenses.reduce((s,e)=>s+(e.amount||0),0);
 
   const ws1=XLSX.utils.aoa_to_sheet([
@@ -2739,7 +2745,8 @@ let allExpenses = [];
 function populateExpenseMonthFilter() {
   const sel = document.getElementById('expense-month-filter');
   if(!sel) return;
-  const months = [...new Set(allExpenses.map(e=>e.expenseDate?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const toDateStr=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+  const months = [...new Set(allExpenses.map(e=>toDateStr(e.expenseDate).slice(0,7)).filter(Boolean))].sort().reverse();
   const cur = sel.value;
   sel.innerHTML = '<option value="">全部</option>' + months.map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
 }
@@ -2788,7 +2795,8 @@ window.renderExpenseList = function() {
   const sel = document.getElementById('expense-month-filter');
   populateExpenseMonthFilter();
   const filter = sel?.value||'';
-  const list = filter ? allExpenses.filter(e=>e.expenseDate?.startsWith(filter)) : allExpenses;
+  const toDS=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+  const list = filter ? allExpenses.filter(e=>toDS(e.expenseDate).startsWith(filter)) : allExpenses;
   const el = document.getElementById('expense-list');
   if(!el) return;
   if(list.length===0){ el.innerHTML='<div class="empty-state"><div class="icon">💸</div><p>尚無支出記錄</p></div>'; return; }
@@ -2923,14 +2931,18 @@ window.initPrintPage = function() {
   document.getElementById('print-digits').onchange = window.updatePrintPreview;
 };
 
-function populatePrintCellSelect() {
+function populatePrintCellSelect(filterType) {
   const sel = document.getElementById('print-cell-select');
   if(!sel) return;
   const ownerCells = getAllCells().filter(c=>!allOwners[c.ownerId]?.inactive);
   const storeCells = Object.values(allStoreCells||{});
-  sel.innerHTML = '<option value="">請選擇格子...</option>'
-    + (ownerCells.length?'<optgroup label="── 格主格子 ──">'+ownerCells.map(c=>`<option value="${c.cellId}" data-type="owner">${c.cellId}（${c.ownerName}）</option>`).join('')+'</optgroup>':'')
-    + (storeCells.length?'<optgroup label="── 店內格子 ──">'+storeCells.map(c=>`<option value="${c.cellId}" data-type="store">${c.cellId}（店內）</option>`).join('')+'</optgroup>':'');
+  if(!filterType||filterType==='owner') {
+    sel.innerHTML = '<option value="">請選擇格子...</option>'
+      + ownerCells.map(c=>`<option value="${c.cellId}" data-type="owner">${c.cellId}（${c.ownerName}）</option>`).join('');
+  } else {
+    sel.innerHTML = '<option value="">請選擇格子...</option>'
+      + storeCells.map(c=>`<option value="${c.cellId}" data-type="store">${c.cellId}（店內）</option>`).join('');
+  }
   sel.onchange = window.onPrintCellChange;
 }
 
@@ -3035,6 +3047,99 @@ function renderPrintRecords() {
     </div>`;
   }).join('');
 }
+
+// ===== 結帳日總覽 =====
+let currentSettleDay = 1;
+
+window.switchSettleDay = function(day, el) {
+  currentSettleDay = day;
+  document.querySelectorAll('#page-report .toggle-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  window.renderSettlementBoard();
+};
+
+window.renderSettlementBoard = function() {
+  const el = document.getElementById('settlement-board'); if(!el) return;
+  const now = new Date();
+  const yearSel = document.getElementById('settle-year');
+  const monthSel = document.getElementById('settle-month');
+  if(yearSel && !yearSel.options.length) {
+    for(let y=now.getFullYear();y>=now.getFullYear()-3;y--)
+      yearSel.innerHTML+=`<option value="${y}">${y}年</option>`;
+  }
+  if(monthSel && !monthSel.options.length) {
+    for(let m=1;m<=12;m++)
+      monthSel.innerHTML+=`<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
+  }
+  const selYear=parseInt(yearSel?.value||now.getFullYear());
+  const selMonth=parseInt(monthSel?.value||(now.getMonth()+1));
+  const day=currentSettleDay;
+  let periodStart,periodEnd,settleDateLabel,periodLabel;
+  if(day===1){
+    const py=selMonth===1?selYear-1:selYear,pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,1); periodEnd=new Date(selYear,selMonth-1,1);
+    const ld=new Date(selYear,selMonth-1,0).getDate();
+    settleDateLabel=`${selYear}/${selMonth}/1 結帳日`;
+    periodLabel=`${py}/${pm}/1 ～ ${py}/${pm}/${ld}`;
+  } else {
+    const py=selMonth===1?selYear-1:selYear,pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,15); periodEnd=new Date(selYear,selMonth-1,15);
+    settleDateLabel=`${selYear}/${selMonth}/15 結帳日`;
+    periodLabel=`${py}/${pm}/15 ～ ${selYear}/${selMonth}/14`;
+  }
+  const targetProds=Object.values(allProducts).filter(p=>{
+    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    if(ct<periodStart||ct>=periodEnd) return false;
+    const owner=getOwnerByCell(p.cellId);
+    return owner&&owner.settleDay===day;
+  });
+  if(!targetProds.length){
+    el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div><div style="font-size:12px;color:var(--text2);">帳務期間：${periodLabel}</div></div></div><div class="empty-state"><div class="icon">✅</div><p>此結帳日暫無待撥款項目</p></div>`;
+    return;
+  }
+  const ownerMap={};
+  targetProds.forEach(prod=>{
+    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
+    const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
+    const confirmedAmt=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    const fee=owner.feeRate/100;
+    if(!ownerMap[owner.id]) ownerMap[owner.id]={owner,boards:[],totalGet:0,hasPendingAny:false};
+    const ownerGet=hasPending?0:Math.round(confirmedAmt*(1-fee));
+    ownerMap[owner.id].boards.push({prod,hasPending,confirmedAmt,ownerGet});
+    if(hasPending) ownerMap[owner.id].hasPendingAny=true;
+    ownerMap[owner.id].totalGet+=ownerGet;
+  });
+  el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div><div style="font-size:12px;color:var(--text2);">帳務期間：${periodLabel}</div></div>
+    <button class="btn btn-success btn-sm" id="settle-dl-btn">⬇️ 下載清單</button>
+  </div>`+Object.values(ownerMap).map(({owner,boards,totalGet,hasPendingAny})=>{
+    const rows=boards.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
+      <div><div style="font-size:13px;">${b.prod.name||''} <span style="font-size:11px;color:var(--text3);">${b.prod.cellId||''}</span></div>
+      <div style="font-size:11px;color:var(--text2);">已確認 $${b.confirmedAmt.toLocaleString()} ${b.hasPending?'<span class="badge badge-pending" style="font-size:10px;">含待核帳</span>':'<span class="badge badge-confirmed" style="font-size:10px;">可撥款</span>'}</div></div>
+      <div style="font-weight:700;color:${b.hasPending?'var(--text3)':'var(--accent3)'};">${b.hasPending?'暫緩':'$'+b.ownerGet.toLocaleString()}</div>
+    </div>`).join('');
+    return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div><div style="font-weight:700;font-size:15px;">${owner.name}</div>
+        <div style="font-size:12px;color:var(--text2);">費率 ${owner.feeRate}%・格子：${(owner.cells||[]).join('、')}</div></div>
+        <div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:${hasPendingAny&&totalGet===0?'var(--warning)':'var(--owner)'};">$${totalGet.toLocaleString()}</div>
+        ${hasPendingAny?'<div style="font-size:11px;color:var(--warning);">部分暫緩</div>':''}</div>
+      </div>${rows}</div>`;
+  }).join('');
+  setTimeout(()=>{
+    const btn=document.getElementById('settle-dl-btn');
+    if(btn) btn.addEventListener('click',()=>window.downloadSettlementReport(day,selYear,selMonth));
+  },0);
+};
+
+// ===== 列印頁格主/店內切換 =====
+window.switchPrintType = function(type, el) {
+  document.querySelectorAll('#page-print .toggle-btn').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  populatePrintCellSelect(type);
+};
 
 </script>
 </body>
