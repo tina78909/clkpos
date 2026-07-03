@@ -995,7 +995,9 @@ function setupRealtimeListeners() {
     allExpenses = [];
     snap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
     renderDashboard();
-    renderExpenseList();
+    // 只有支出頁面月份選單已初始化才更新列表
+    const expSel = document.getElementById('expense-month-filter');
+    if(expSel && expSel.options.length > 0) window.renderExpenseList();
   });
 
   onSnapshot(query(collection(db,'transactions'), orderBy('createdAt','desc')), snap => {
@@ -2618,7 +2620,13 @@ window.submitExpense = async function() {
   document.getElementById('expense-item').value='';
   document.getElementById('expense-note').value='';
   showToast('✅ 支出已記錄');
-  // onSnapshot 會自動更新，不需手動載入
+  // 手動更新（確保即時顯示）
+  const expSnap = await getDocs(query(collection(db,'expenses'), orderBy('expenseDate','desc')));
+  allExpenses = [];
+  expSnap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
+  populateExpenseMonthFilter();
+  window.renderExpenseList();
+  renderDashboard();
 };
 
 window.deleteExpense = async function(expId) {
@@ -3215,15 +3223,16 @@ function populateReportMonths() {
   const monthSel = document.getElementById('report-month-only');
   if(!yearSel || !monthSel) return;
   const now = new Date();
-  if(!yearSel.options.length) {
-    for(let y=now.getFullYear(); y>=now.getFullYear()-4; y--){
-      yearSel.innerHTML += `<option value="${y}">${y}年</option>`;
-    }
+  const curYear  = yearSel.value  || String(now.getFullYear());
+  const curMonth = monthSel.value || String(now.getMonth()+1);
+  // 每次重新填充
+  yearSel.innerHTML = '';
+  for(let y=now.getFullYear(); y>=now.getFullYear()-4; y--){
+    yearSel.innerHTML += `<option value="${y}" ${String(y)===curYear?'selected':''}>${y}年</option>`;
   }
-  if(!monthSel.options.length) {
-    for(let m=1;m<=12;m++){
-      monthSel.innerHTML += `<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
-    }
+  monthSel.innerHTML = '';
+  for(let m=1;m<=12;m++){
+    monthSel.innerHTML += `<option value="${m}" ${String(m)===curMonth?'selected':''}>${m}月</option>`;
   }
 }
 
