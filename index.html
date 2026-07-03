@@ -2635,11 +2635,9 @@ window.downloadReport = async function() {
     const dt=tx.createdAt?.toDate(); return dt&&dt>=start&&dt<end&&tx.paymentStatus==='confirmed';
   });
   const totalRev = allConfirmed.reduce((s,tx)=>s+(tx.amount||0),0);
-  // 店內收益計算（與總覽邏輯一致）
-  let storeRev=0;
-  // 1. 店內商品直接計入
-  allConfirmed.filter(tx=>tx.productType==='store').forEach(tx=>storeRev+=(tx.amount||0));
-  // 2. 格主手續費：只計算「已完刮且無待核帳」的刮板，每張只算一次
+  // 店內收益 = 總營業額 - 格主可得金額（只有可撥款刮板才扣）
+  // 格主可得 = 刮板已確認總額 × (1 - 費率)
+  let ownerPayoutTotal = 0;
   const seenS=new Set();
   Object.values(allProducts).filter(p=>{
     if(!p.completedAt||p.deleted||p.type!=='owner') return false;
@@ -2649,12 +2647,15 @@ window.downloadReport = async function() {
     if(seenS.has(prod.id)) return;
     const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
     const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
-    if(hasPending) return; // 有待核帳就暫緩，不計手續費
+    if(hasPending) return; // 有待核帳就暫緩，整張不撥款
     seenS.add(prod.id);
     const confirmedTotal=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
     const o=getOwnerByCell(prod.cellId);
-    storeRev+=confirmedTotal*((o?.feeRate||10)/100);
+    const fee=(o?.feeRate||10)/100;
+    ownerPayoutTotal+=Math.round(confirmedTotal*(1-fee));
   });
+  // 店內收益 = 總營業額 - 格主可得
+  const storeRev = totalRev - ownerPayoutTotal;
   const toD=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
   const monthExpenses=allExpenses.filter(e=>toD(e.expenseDate).startsWith(monthStr));
   const totalExp=monthExpenses.reduce((s,e)=>s+(e.amount||0),0);
@@ -2662,9 +2663,10 @@ window.downloadReport = async function() {
   const ws1=XLSX.utils.aoa_to_sheet([
     ['CLK Toys POS 月報表', monthStr],[],
     ['總營業額（已確認）', totalRev],
-    ['店內收益（含手續費）', Math.round(storeRev)],
+    ['格主應撥款（已扣除）', ownerPayoutTotal],
+    ['店內收益（總營業額-格主可得）', Math.round(storeRev)],
     ['支出合計', totalExp],
-    ['店內淨收益', Math.round(storeRev)-totalExp],
+    ['店內淨收益（店內收益-支出）', Math.round(storeRev)-totalExp],
   ]);
   XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
 
