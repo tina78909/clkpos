@@ -2735,6 +2735,14 @@ window.showToast = function(msg,dur=2500){const el=document.getElementById('toas
 // ===== 支出功能 =====
 let allExpenses = [];
 
+function populateExpenseMonthFilter() {
+  const sel = document.getElementById('expense-month-filter');
+  if(!sel) return;
+  const months = [...new Set(allExpenses.map(e=>e.expenseDate?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部</option>' + months.map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
+}
+
 function setupExpenseListener() {
   onSnapshot(collection(db,'expenses'), snap => {
     allExpenses = [];
