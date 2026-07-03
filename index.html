@@ -2810,7 +2810,7 @@ window.renderExpenseList = function() {
   const el = document.getElementById('expense-list');
   if(!el) return;
   if(list.length===0){ el.innerHTML='<div class="empty-state"><div class="icon">💸</div><p>尚無支出記錄</p></div>'; return; }
-  const catName = {staff:'工讀生',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
   el.innerHTML = list.map(e=>`<div class="tx-item">
     <div class="tx-header">
       <div><span class="badge badge-pending">${catName[e.category]||e.category}</span> <span style="font-size:13px;">${e.item}</span></div>
@@ -2824,6 +2824,10 @@ window.renderExpenseList = function() {
   el.querySelectorAll('[data-del-expense]').forEach(btn=>{
     btn.addEventListener('click',()=>deleteExpense(btn.dataset.delExpense));
   });
+  // 更新篩選月份合計
+  const total = list.reduce((s,e)=>s+(e.amount||0), 0);
+  const totalEl = document.getElementById('expense-total-amount');
+  if(totalEl) totalEl.textContent = '$'+total.toLocaleString();
 };
 
 // ===== 租約到期提醒 =====
