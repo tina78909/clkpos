@@ -2748,7 +2748,10 @@ function setupExpenseListener() {
   onSnapshot(collection(db,'expenses'), snap => {
     allExpenses = [];
     snap.forEach(d => allExpenses.push({id:d.id,...d.data()}));
-    allExpenses.sort((a,b)=>(b.expenseDate||'').localeCompare(a.expenseDate||''));
+    allExpenses.sort((a,b)=>{
+      const toStr=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+      return toStr(b.expenseDate).localeCompare(toStr(a.expenseDate));
+    });
     renderExpenseList();
     renderDashboard();
   });
@@ -2798,7 +2801,7 @@ window.renderExpenseList = function() {
         <button class="btn btn-ghost btn-xs" data-del-expense="${e.id}">🗑️</button>
       </div>
     </div>
-    <div class="tx-meta"><span>${e.expenseDate||''}</span><span>👤 ${e.createdByEmail||''}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
+    <div class="tx-meta"><span>${typeof e.expenseDate==='string'?e.expenseDate:(e.expenseDate?.toDate?e.expenseDate.toDate().toISOString().slice(0,10):'')}</span><span>👤 ${e.createdByEmail||''}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
   </div>`).join('');
   el.querySelectorAll('[data-del-expense]').forEach(btn=>{
     btn.addEventListener('click',()=>deleteExpense(btn.dataset.delExpense));
@@ -2851,6 +2854,187 @@ function populateLightningRentSelects() {
   ownerSel.dispatchEvent(new Event('change'));
 }
 
+// ===== 結帳日下載 =====
+window.downloadSettlementReport = async function(day, selYear, selMonth) {
+  const now = new Date();
+  selYear  = parseInt(selYear  || now.getFullYear());
+  selMonth = parseInt(selMonth || (now.getMonth()+1));
+  let periodStart, periodEnd, settleDateLabel, periodLabel;
+  if(day===1){
+    const py=selMonth===1?selYear-1:selYear, pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,1); periodEnd=new Date(selYear,selMonth-1,1);
+    const ld=new Date(selYear,selMonth-1,0).getDate();
+    settleDateLabel=selYear+'/'+selMonth+'/1 結帳日';
+    periodLabel=py+'/'+pm+'/1~'+py+'/'+pm+'/'+ld;
+  } else {
+    const py=selMonth===1?selYear-1:selYear, pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,15); periodEnd=new Date(selYear,selMonth-1,15);
+    settleDateLabel=selYear+'/'+selMonth+'/15 結帳日';
+    periodLabel=py+'/'+pm+'/15~'+selYear+'/'+selMonth+'/14';
+  }
+  const [prodSnap,txSnap]=await Promise.all([getDocs(collection(db,'products')),getDocs(query(collection(db,'transactions'),orderBy('createdAt','desc')))]);
+  prodSnap.forEach(d=>{allProducts[d.id]={id:d.id,...d.data()};});
+  allTxs=[]; txSnap.forEach(d=>allTxs.push({id:d.id,...d.data()}));
+  await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
+  const wb=XLSX.utils.book_new();
+  const targetProds=Object.values(allProducts).filter(p=>{
+    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    if(ct<periodStart||ct>=periodEnd) return false;
+    const owner=getOwnerByCell(p.cellId);
+    return owner&&owner.settleDay===day;
+  });
+  const ownerMap={};
+  targetProds.forEach(prod=>{
+    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
+    const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
+    const confirmedAmt=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    const fee=owner.feeRate/100;
+    if(!ownerMap[owner.id]) ownerMap[owner.id]={owner,boards:[],totalGet:0};
+    const ownerGet=hasPending?0:Math.round(confirmedAmt*(1-fee));
+    ownerMap[owner.id].boards.push({prod,hasPending,confirmedAmt,fee,ownerGet});
+    ownerMap[owner.id].totalGet+=ownerGet;
+  });
+  const wsData=[[`CLK Toys POS - ${settleDateLabel}`],[`帳務期間：${periodLabel}`],[]];
+  Object.values(ownerMap).forEach(({owner,boards,totalGet})=>{
+    wsData.push([`【${owner.name}】費率 ${owner.feeRate}%・格子：${(owner.cells||[]).join('、')}`,'','','','','']);
+    wsData.push(['格子','刮板品名','完刮日','已確認實收','手續費','格主可得','狀態']);
+    boards.forEach(b=>{
+      const ct=b.prod.completedAt?.toDate?b.prod.completedAt.toDate():new Date(b.prod.completedAt);
+      wsData.push([b.prod.cellId||'',b.prod.name||'',ct.toLocaleDateString('zh-TW'),b.confirmedAmt,Math.round(b.confirmedAmt*b.fee),b.ownerGet,b.hasPending?'⏳暫緩':'✅可撥款']);
+    });
+    wsData.push(['合計','','','','',totalGet,'']);
+    wsData.push([]);
+  });
+  if(!Object.keys(ownerMap).length) wsData.push(['此結帳日無待撥款項目']);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(wsData),settleDateLabel.replace(/\//g,'-'));
+  XLSX.writeFile(wb,'CLK-結帳-'+settleDateLabel.replace(/\//g,'-')+'.xlsx');
+  showToast('📥 結帳清單下載中...');
+};
+
+// ===== 列印功能 =====
+window.initPrintPage = function() {
+  populatePrintCellSelect();
+  renderPrintRecords();
+  document.getElementById('print-generate-btn').onclick = window.generateBarcodePDF;
+  document.getElementById('print-start-num').oninput = window.updatePrintPreview;
+  document.getElementById('print-qty').oninput = window.updatePrintPreview;
+  document.getElementById('print-digits').onchange = window.updatePrintPreview;
+};
+
+function populatePrintCellSelect() {
+  const sel = document.getElementById('print-cell-select');
+  if(!sel) return;
+  const ownerCells = getAllCells().filter(c=>!allOwners[c.ownerId]?.inactive);
+  const storeCells = Object.values(allStoreCells||{});
+  sel.innerHTML = '<option value="">請選擇格子...</option>'
+    + (ownerCells.length?'<optgroup label="── 格主格子 ──">'+ownerCells.map(c=>`<option value="${c.cellId}" data-type="owner">${c.cellId}（${c.ownerName}）</option>`).join('')+'</optgroup>':'')
+    + (storeCells.length?'<optgroup label="── 店內格子 ──">'+storeCells.map(c=>`<option value="${c.cellId}" data-type="store">${c.cellId}（店內）</option>`).join('')+'</optgroup>':'');
+  sel.onchange = window.onPrintCellChange;
+}
+
+window.onPrintCellChange = function() {
+  const sel = document.getElementById('print-cell-select');
+  const cellId = sel.value; if(!cellId) return;
+  const owner = getOwnerByCell(cellId);
+  const rec = (owner?.printRecords||{})[cellId] || (allStoreCells?.[cellId]?.printRecords?.[cellId]) || {lastNum:0};
+  const infoEl = document.getElementById('print-prefix-info');
+  if(infoEl){
+    infoEl.classList.remove('hidden');
+    infoEl.innerHTML = `格子 <strong>${cellId}</strong>・上次印到 <strong>${rec.lastNum||0}</strong> 號，建議從 <strong>${(rec.lastNum||0)+1}</strong> 開始`;
+  }
+  document.getElementById('print-start-num').value = (rec.lastNum||0)+1;
+  window.updatePrintPreview();
+};
+
+window.updatePrintPreview = function() {
+  const cellId=document.getElementById('print-cell-select').value;
+  const startNum=parseInt(document.getElementById('print-start-num').value)||1;
+  const qty=parseInt(document.getElementById('print-qty').value)||1;
+  const digits=parseInt(document.getElementById('print-digits').value)||5;
+  const el=document.getElementById('print-sample');
+  if(!cellId||!el){if(el)el.textContent='';return;}
+  el.innerHTML=`預覽：<strong>${cellId}-${String(startNum).padStart(digits,'0')}</strong> ～ <strong>${cellId}-${String(startNum+qty-1).padStart(digits,'0')}</strong>（共 ${qty} 張）`;
+};
+
+window.generateBarcodePDF = async function() {
+  const cellId=document.getElementById('print-cell-select').value;
+  const startNum=parseInt(document.getElementById('print-start-num').value)||1;
+  const qty=parseInt(document.getElementById('print-qty').value)||1;
+  const digits=parseInt(document.getElementById('print-digits').value)||5;
+  if(!cellId){showToast('請先選擇格子');return;}
+  if(qty<1||qty>500){showToast('數量需在1~500之間');return;}
+  showToast('⏳ 正在生成PDF...');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  const {jsPDF}=window.jspdf;
+  const pageW=30,pageH=15;
+  const qrDiv=document.createElement('div');
+  qrDiv.style.cssText='position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(qrDiv);
+  const pdfDoc=new jsPDF({orientation:'landscape',unit:'mm',format:[pageH,pageW]});
+  for(let i=0;i<qty;i++){
+    const code=cellId+'-'+String(startNum+i).padStart(digits,'0');
+    if(i>0) pdfDoc.addPage([pageH,pageW],'landscape');
+    qrDiv.innerHTML='';
+    await new Promise(res=>{new QRCode(qrDiv,{text:code,width:256,height:256,correctLevel:QRCode.CorrectLevel.M});setTimeout(res,60);});
+    const canvas=qrDiv.querySelector('canvas');
+    if(canvas) pdfDoc.addImage(canvas.toDataURL('image/png'),'PNG',1,1,13,13);
+    const parts=code.split('-');
+    pdfDoc.setFontSize(10); pdfDoc.setFont('helvetica','normal');
+    pdfDoc.text(parts[0],15.5,6,{align:'left'});
+    pdfDoc.setFontSize(14); pdfDoc.setFont('helvetica','bold');
+    pdfDoc.text(parts.slice(1).join('-'),15.5,12,{align:'left'});
+  }
+  document.body.removeChild(qrDiv);
+  // 更新列印紀錄
+  const selOpt=document.getElementById('print-cell-select')?.options[document.getElementById('print-cell-select')?.selectedIndex];
+  const isStore=selOpt?.dataset?.type==='store';
+  if(!isStore){
+    const owner=getOwnerByCell(cellId);
+    if(owner){
+      const records=JSON.parse(JSON.stringify(owner.printRecords||{}));
+      records[cellId]={lastNum:startNum+qty-1,lastPrintAt:new Date().toISOString(),totalPrinted:(records[cellId]?.totalPrinted||0)+qty};
+      await updateDoc(doc(db,'owners',owner.id),{printRecords:records});
+    }
+  } else {
+    const configRef=doc(db,'config','storeCells');
+    const snap=await getDoc(configRef);
+    const existing=snap.exists()?snap.data():{};
+    if(!existing[cellId]) existing[cellId]={cellId,name:cellId,printRecords:{}};
+    existing[cellId].printRecords=existing[cellId].printRecords||{};
+    existing[cellId].printRecords[cellId]={lastNum:startNum+qty-1,lastPrintAt:new Date().toISOString(),totalPrinted:(existing[cellId].printRecords[cellId]?.totalPrinted||0)+qty};
+    await setDoc(configRef,existing);
+    allStoreCells=existing;
+  }
+  pdfDoc.save('CLK-QR-'+cellId+'-'+String(startNum).padStart(digits,'0')+'~'+String(startNum+qty-1).padStart(digits,'0')+'.pdf');
+  showToast('✅ PDF已下載，共'+qty+'頁');
+  renderPrintRecords();
+};
+
+function renderPrintRecords() {
+  const el=document.getElementById('print-records-list'); if(!el) return;
+  const rows=[];
+  getAllCells().forEach(c=>{
+    const owner=allOwners[c.ownerId]; if(owner?.inactive) return;
+    const rec=(owner?.printRecords||{})[c.cellId];
+    if(rec) rows.push({cellId:c.cellId,ownerName:c.ownerName,...rec});
+  });
+  Object.values(allStoreCells||{}).forEach(c=>{
+    const rec=(c.printRecords||{})[c.cellId];
+    if(rec) rows.push({cellId:c.cellId,ownerName:'店內',...rec});
+  });
+  if(!rows.length){el.innerHTML='<div class="empty-state"><div class="icon">📋</div><p>尚無列印紀錄</p></div>';return;}
+  el.innerHTML=rows.map(r=>{
+    const dt=r.lastPrintAt?new Date(r.lastPrintAt).toLocaleDateString('zh-TW'):'';
+    return `<div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <div><div style="font-weight:600;">${r.cellId} <span style="font-size:12px;color:var(--text2);">${r.ownerName}</span></div>
+      <div style="font-size:12px;color:var(--text2);">最後印到 <strong>${r.lastNum}</strong> 號・${dt}</div></div>
+      <div style="font-size:13px;color:var(--accent);">下次從 <strong>${(r.lastNum||0)+1}</strong> 開始</div>
+    </div>`;
+  }).join('');
+}
 
 </script>
 </body>
