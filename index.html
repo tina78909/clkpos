@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>CLK Toys POS v3.2</title>
 <style>
 :root {
@@ -50,12 +50,12 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .topnav-right{display:flex;align-items:center;gap:12px;}
 .user-badge{font-size:12px;color:var(--text2);background:var(--surface2);padding:4px 10px;border-radius:20px;border:1px solid var(--border);}
 .user-badge.boss{border-color:var(--owner);color:var(--owner);}
-.bottomnav{background:var(--surface);border-top:1px solid var(--border);display:flex;position:fixed;bottom:0;left:0;right:0;z-index:100;height:60px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+.bottomnav{background:var(--surface);border-top:1px solid var(--border);display:flex;position:fixed;bottom:0;left:0;right:0;z-index:100;height:calc(60px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .bottomnav::-webkit-scrollbar{display:none;}
 .bottomnav-item{min-width:64px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--text3);font-size:10px;transition:color .2s;border:none;background:none;}
 .bottomnav-item.active{color:var(--accent);}
 .bottomnav-item svg{width:20px;height:20px;}
-.main-content{flex:1;padding:20px;padding-bottom:80px;max-width:1200px;margin:0 auto;width:100%;}
+.main-content{flex:1;padding:20px;padding-bottom:calc(80px + env(safe-area-inset-bottom));max-width:1200px;margin:0 auto;width:100%;}
 .page{display:none;}
 .page.active{display:block;}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;}
@@ -160,7 +160,7 @@ select option{background:var(--surface2);}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
 @media(max-width:480px){
-  .main-content{padding:14px;padding-bottom:80px;}
+  .main-content{padding:14px;padding-bottom:calc(80px + env(safe-area-inset-bottom));}
   .stat-grid{gap:8px;}
   .stat-value{font-size:18px;}
   .form-row{grid-template-columns:1fr;}
@@ -845,6 +845,7 @@ select option{background:var(--surface2);}
         <div class="field-group"><label class="field-label">總刮數</label><input type="number" id="lightning-draws" placeholder="40"></div>
       </div>
       <div class="field-group"><label class="field-label">實收金額</label><input type="number" id="lightning-amount" placeholder="自動計算..."></div>
+      <div class="field-group"><label class="field-label">備註</label><input type="text" id="lightning-scratch-note" placeholder="選填，例如：客訂/活動贈品等"></div>
     </div>
 
     <!-- 店內商品 -->
@@ -881,6 +882,7 @@ select option{background:var(--surface2);}
         <div class="field-group"><label class="field-label">總刮數</label><input type="number" id="lightning-owner-draws" placeholder="40"></div>
       </div>
       <div class="field-group"><label class="field-label">實收金額</label><input type="number" id="lightning-owner-amount" placeholder="自動計算..."></div>
+      <div class="field-group"><label class="field-label">備註</label><input type="text" id="lightning-owner-note" placeholder="選填，例如：客訂/活動贈品等"></div>
     </div>
 
     <div class="field-group">
@@ -1637,41 +1639,32 @@ window.saveProduct = async function() {
   if(editId) {
     const p = allProducts[editId];
     const isEnded = p && (p.status==='completed'||p.status==='scrapped');
-    if(isEnded) {
-      // 只更新歸屬（類型、格子、格主）
-      const newCellId  = productType==='owner' ? cellId : null;
-      const newOwnerId = owner ? owner.id : null;
-      await updateDoc(doc(db,'products',editId),{
-        type: productType, subType,
-        cellId: newCellId, ownerId: newOwnerId
-      });
-      // 同步更新所有相關交易的歸屬，確保報表正確
-      const relTxSnap = await getDocs(query(collection(db,'transactions'),where('productId','==',editId)));
-      await Promise.all(relTxSnap.docs.map(d=>updateDoc(d.ref,{
-        productType, cellId: newCellId, ownerId: newOwnerId
-      })));
-      showToast('✅ 商品歸屬已更新，相關帳務同步修正');
-    } else {
-      const newCellId2  = productType==='owner' ? cellId : null;
-      const newOwnerId2 = owner ? owner.id : null;
-      await updateDoc(doc(db,'products',editId),{
-        name, type: productType, subType,
+    // 條碼重複檢查（排除自己）
+    const dupProd = Object.values(allProducts).find(o=>o.id!==editId && !o.deleted && o.barcode===finalBarcode);
+    if(dupProd) { showToast('⚠️ 此條碼已被其他商品使用，請確認'); return; }
+    const newCellId  = productType==='owner' ? cellId : null;
+    const newOwnerId = owner ? owner.id : null;
+    // 名稱、條碼、歸屬（類型/格子/格主）一律可同時修改
+    const updateData = {
+      name, barcode: finalBarcode,
+      type: productType, subType,
+      cellId: newCellId, ownerId: newOwnerId
+    };
+    // 已完刮/已廢套的商品鎖定金額與刮數，避免影響已結算數字
+    if(!isEnded) {
+      Object.assign(updateData, {
         tiers: isBlindbox?[]:tiers,
         unitPrice, currentPrice: unitPrice,
-        totalDraws: isBlindbox?null:totalDraws,
-        cellId: newCellId2, ownerId: newOwnerId2
+        totalDraws: isBlindbox?null:totalDraws
       });
-      // 同步更新相關交易歸屬
-      const relTxSnap2 = await getDocs(query(collection(db,'transactions'),where('productId','==',editId)));
-      await Promise.all(relTxSnap2.docs.map(d=>updateDoc(d.ref,{
-        productType, cellId: newCellId2, ownerId: newOwnerId2
-      })));
-      showToast('✅ 商品已更新，相關帳務同步修正');
     }
-    // 重置 disabled 狀態
-    ['product-name','product-total-draws','product-unit-price'].forEach(id=>{
-      document.getElementById(id).disabled = false;
-    });
+    await updateDoc(doc(db,'products',editId), updateData);
+    // 同步更新所有相關交易的品名與歸屬，確保報表正確
+    const relTxSnap = await getDocs(query(collection(db,'transactions'),where('productId','==',editId)));
+    await Promise.all(relTxSnap.docs.map(d=>updateDoc(d.ref,{
+      productType, productName: name, cellId: newCellId, ownerId: newOwnerId
+    })));
+    showToast(isEnded?'✅ 商品名稱/條碼/歸屬已更新（金額與刮數已鎖定），相關帳務同步修正':'✅ 商品已更新，相關帳務同步修正');
   } else {
     await addDoc(collection(db,'products'),{...data,createdAt:serverTimestamp()});
     if(type==='owner'&&owner) await updateDoc(doc(db,'owners',owner.id),{barcodeUsed:(owner.barcodeUsed||0)+1});
@@ -1688,7 +1681,7 @@ window.openEditProductModal = function(productId) {
   document.getElementById('new-product-modal-title').textContent = '✏️ 修改商品';
   document.getElementById('editing-product-id').value = productId;
   document.getElementById('product-barcode').value = p.barcode||'';
-  document.getElementById('product-barcode').disabled = true; // 條碼不可改
+  document.getElementById('product-barcode').disabled = false; // 條碼可與名稱、歸屬一併修改
   document.getElementById('product-name').value = p.name||'';
   // 還原選單值：owner=owner, blindbox=blindbox, lottery=lottery
   const editTypeVal = p.type==='owner' ? 'owner' : (p.subType==='blindbox' ? 'blindbox' : 'lottery');
@@ -1750,7 +1743,7 @@ function renderProductsList() {
       <div class="product-stats">${statsHtml}</div>
       ${isBlindboxCard?'':'<div class="progress-bar mt-8"><div class="progress-fill" style="width:'+pct+'%"></div></div>'}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <button class="btn btn-secondary btn-xs" data-edit-pid="${p.id}">✏️ 修改歸屬</button>
+        <button class="btn btn-secondary btn-xs" data-edit-pid="${p.id}">✏️ 修改商品</button>
         ${(p.status==='active'&&p.subType!=='blindbox')?'<button class="btn btn-warning btn-xs" data-price-pid="'+p.id+'">💲 調整金額</button>':''}
         ${buildProductActionBtns(p)}
 
@@ -1997,7 +1990,7 @@ window.submitTransaction = async function() {
   const transferCode  = document.getElementById('tx-transfer-code').value.trim();
   const transferConfirmed = document.getElementById('tx-transfer-confirmed')?.checked;
   const completeOnSubmit  = document.getElementById('tx-complete-on-submit')?.checked;
-  if(!amount||amount<=0){showToast('請填寫金額');return;}
+  if(isNaN(amount)||amount<0){showToast('請填寫金額');return;}
   const paymentStatus = (payment!=='transfer'||transferConfirmed) ? 'confirmed' : 'pending';
 
   // 若選完刮出貨但此筆為待核帳，警告
@@ -2470,9 +2463,10 @@ window.openLightningModal = function() {
   document.getElementById('lightning-type').value = 'store_scratch';
   onLightningTypeChange();
   ['lightning-price','lightning-draws','lightning-amount','lightning-note',
+   'lightning-scratch-note',
    'lightning-transfer-code','lightning-item-amount','lightning-item-note',
    'lightning-rent-amount','lightning-rent-start','lightning-rent-end',
-   'lightning-owner-price','lightning-owner-draws','lightning-owner-amount'].forEach(id=>{
+   'lightning-owner-price','lightning-owner-draws','lightning-owner-amount','lightning-owner-note'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.value='';
   });
   if(document.getElementById('lightning-transfer-confirmed')) document.getElementById('lightning-transfer-confirmed').checked=false;
@@ -2497,7 +2491,7 @@ window.submitLightning = async function() {
     // 店內商品登帳
     const amount = parseFloat(document.getElementById('lightning-item-amount').value);
     const note   = document.getElementById('lightning-item-note').value.trim();
-    if(!amount||amount<=0){showToast('請填寫金額');return;}
+    if(isNaN(amount)||amount<0){showToast('請填寫金額');return;}
     await addDoc(collection(db,'transactions'),{
       productId:null, productName: note||'店內商品',
       productType:'store', cellId:null, ownerId:null,
@@ -2518,7 +2512,7 @@ window.submitLightning = async function() {
     const amount   = parseFloat(document.getElementById('lightning-rent-amount').value);
     const rentStart= document.getElementById('lightning-rent-start').value;
     const rentEnd  = document.getElementById('lightning-rent-end').value;
-    if(!ownerId||!amount||!rentStart||!rentEnd){showToast('請填寫完整租金資訊');return;}
+    if(!ownerId||isNaN(amount)||amount<0||!rentStart||!rentEnd){showToast('請填寫完整租金資訊');return;}
     const owner = allOwners[ownerId];
     const note  = `格子租金 ${cellId} (${rentStart}~${rentEnd})`;
     // 儲存租約資訊到 owner（用於到期通知）
@@ -2543,8 +2537,10 @@ window.submitLightning = async function() {
     const cellId   = document.getElementById('lightning-cell-id').value;
     const price    = parseFloat(document.getElementById('lightning-owner-price').value);
     const draws    = parseInt(document.getElementById('lightning-owner-draws').value);
-    const amount   = parseFloat(document.getElementById('lightning-owner-amount').value)||(price*draws);
+    const ownerAmountRaw = document.getElementById('lightning-owner-amount').value;
+    const amount   = ownerAmountRaw===''? (price*draws) : parseFloat(ownerAmountRaw);
     if(!price||!draws){showToast('請填寫單價與刮數');return;}
+    const ownerNote = document.getElementById('lightning-owner-note').value.trim();
     const owner = getOwnerByCell(cellId);
     const prodRef = await addDoc(collection(db,'products'),{
       barcode:'LIGHTNING-'+Date.now(), name:'閃電登帳 '+now.toLocaleDateString('zh-TW'),
@@ -2559,7 +2555,7 @@ window.submitLightning = async function() {
       productType:'owner', cellId, ownerId:owner?owner.id:null,
       qty:draws, amount, paymentMethod:payment, paymentStatus,
       transferCode:payment==='transfer'?transferCode:null,
-      batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
+      note:ownerNote, batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
       createdAt:serverTimestamp(), createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'owner'
     });
@@ -2570,7 +2566,9 @@ window.submitLightning = async function() {
     // 店內刮板 (store_scratch)
     const price  = parseFloat(document.getElementById('lightning-price').value);
     const draws  = parseInt(document.getElementById('lightning-draws').value);
-    const amount = parseFloat(document.getElementById('lightning-amount').value)||(price*draws);
+    const scratchAmountRaw = document.getElementById('lightning-amount').value;
+    const amount = scratchAmountRaw===''? (price*draws) : parseFloat(scratchAmountRaw);
+    const scratchNote = document.getElementById('lightning-scratch-note').value.trim();
     if(!price||!draws){showToast('請填寫單價與刮數');return;}
     const prodRef = await addDoc(collection(db,'products'),{
       barcode:'LIGHTNING-'+Date.now(), name:'閃電登帳 '+now.toLocaleDateString('zh-TW'),
@@ -2585,7 +2583,7 @@ window.submitLightning = async function() {
       productType:'store', cellId:null, ownerId:null,
       qty:draws, amount, paymentMethod:payment, paymentStatus,
       transferCode:payment==='transfer'?transferCode:null,
-      batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
+      note:scratchNote, batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
       createdAt:serverTimestamp(), createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'store_scratch'
     });
