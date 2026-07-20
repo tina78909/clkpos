@@ -3260,7 +3260,7 @@ window.renderSettlementBoard = function() {
           +'</div>';
       }).join('');
       return '<div style="border-bottom:1px solid var(--border);padding:6px 0;">'
-        +'<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="var d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none'">'
+        +'<div data-toggle style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;">'
           +'<div>'
             +'<div style="font-size:13px;font-weight:600;">'+b.prod.name+' <span style="font-size:11px;color:var(--text3);">'+b.prod.cellId+'</span></div>'
             +'<div style="font-size:11px;color:var(--text2);">共'+bTxs.length+'筆・已確認 $'+b.confirmedAmt.toLocaleString()+' '+(b.hasPending?'<span class="badge badge-pending" style="font-size:10px;">含待核帳</span>':'<span class="badge badge-confirmed" style="font-size:10px;">可撥款</span>')+'</div>'
@@ -3284,6 +3284,13 @@ window.renderSettlementBoard = function() {
   setTimeout(()=>{
     const btn=document.getElementById('settle-dl-btn');
     if(btn) btn.addEventListener('click',()=>window.downloadSettlementReport(day,selYear,selMonth));
+    // 綁定刮板展開/收起
+    el.querySelectorAll('[data-toggle]').forEach(div=>{
+      div.addEventListener('click',()=>{
+        const detail=div.nextElementSibling;
+        if(detail) detail.style.display=detail.style.display==='block'?'none':'block';
+      });
+    });
   },0);
 };
 
