@@ -3031,6 +3031,15 @@ window.downloadSettlementReport = async function(day, selYear, selMonth) {
     boards.forEach(b=>{
       const ct=b.prod.completedAt?.toDate?b.prod.completedAt.toDate():new Date(b.prod.completedAt);
       wsData.push([b.prod.cellId||'',b.prod.name||'',ct.toLocaleDateString('zh-TW'),b.confirmedAmt,Math.round(b.confirmedAmt*b.fee),b.ownerGet,b.hasPending?'⏳暫緩':'✅可撥款']);
+      // 加入各刮板的交易明細
+      const bTxs=allTxs.filter(tx=>tx.productId===b.prod.id);
+      if(bTxs.length>0){
+        wsData.push(['','  ↳日期','抽數','金額','付款方式','狀態','備註']);
+        bTxs.forEach(tx=>{
+          const txDt=tx.createdAt?.toDate?tx.createdAt.toDate().toLocaleDateString('zh-TW'):'-';
+          wsData.push(['','  '+txDt,tx.qty||1,tx.amount||0,tx.paymentMethod==='cash'?'現金':'轉帳',tx.paymentStatus==='confirmed'?'✅已確認':'⏳待核帳',tx.note||'']);
+        });
+      }
     });
     wsData.push(['合計','','','','',totalGet,'']);
     wsData.push([]);
@@ -3235,11 +3244,35 @@ window.renderSettlementBoard = function() {
     <div><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div><div style="font-size:12px;color:var(--text2);">帳務期間：${periodLabel}</div></div>
     <button class="btn btn-success btn-sm" id="settle-dl-btn">⬇️ 下載清單</button>
   </div>`+Object.values(ownerMap).map(({owner,boards,totalGet,hasPendingAny})=>{
-    const rows=boards.map(b=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
-      <div><div style="font-size:13px;">${b.prod.name||''} <span style="font-size:11px;color:var(--text3);">${b.prod.cellId||''}</span></div>
-      <div style="font-size:11px;color:var(--text2);">已確認 $${b.confirmedAmt.toLocaleString()} ${b.hasPending?'<span class="badge badge-pending" style="font-size:10px;">含待核帳</span>':'<span class="badge badge-confirmed" style="font-size:10px;">可撥款</span>'}</div></div>
-      <div style="font-weight:700;color:${b.hasPending?'var(--text3)':'var(--accent3)'};">${b.hasPending?'暫緩':'$'+b.ownerGet.toLocaleString()}</div>
-    </div>`).join('');
+    const rows=boards.map(b=>{
+      const bTxs=allTxs.filter(tx=>tx.productId===b.prod.id);
+      const txRows=bTxs.map(tx=>{
+        const dt=tx.createdAt?.toDate?tx.createdAt.toDate().toLocaleDateString('zh-TW'):'-';
+        const statusLabel=tx.paymentStatus==='confirmed'?'<span style="color:var(--success);font-size:10px;">✅已確認</span>':'<span style="color:var(--warning);font-size:10px;">⏳待核帳</span>';
+        const pmLabel=tx.paymentMethod==='cash'?'💵現金':'🏦轉帳';
+        return '<div style="display:flex;justify-content:space-between;padding:4px 8px;font-size:11px;background:rgba(255,255,255,.04);border-radius:4px;margin-top:3px;gap:6px;">'
+          +'<span style="color:var(--text2);">'+dt+'</span>'
+          +'<span>'+(tx.qty||1)+'抽</span>'
+          +'<span style="font-weight:600;">$'+(tx.amount||0).toLocaleString()+'</span>'
+          +'<span>'+pmLabel+'</span>'
+          +'<span>'+statusLabel+'</span>'
+          +(tx.note?'<span style="color:var(--text3);">'+tx.note+'</span>':'')
+          +'</div>';
+      }).join('');
+      return '<div style="border-bottom:1px solid var(--border);padding:6px 0;">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="var d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none'">'
+          +'<div>'
+            +'<div style="font-size:13px;font-weight:600;">'+b.prod.name+' <span style="font-size:11px;color:var(--text3);">'+b.prod.cellId+'</span></div>'
+            +'<div style="font-size:11px;color:var(--text2);">共'+bTxs.length+'筆・已確認 $'+b.confirmedAmt.toLocaleString()+' '+(b.hasPending?'<span class="badge badge-pending" style="font-size:10px;">含待核帳</span>':'<span class="badge badge-confirmed" style="font-size:10px;">可撥款</span>')+'</div>'
+          +'</div>'
+          +'<div style="display:flex;align-items:center;gap:8px;">'
+            +'<div style="font-weight:700;color:'+(b.hasPending?'var(--warning)':'var(--accent3)')+';">'+(b.hasPending?'暫緩':'$'+b.ownerGet.toLocaleString())+'</div>'
+            +'<span style="font-size:10px;color:var(--text3);">▼</span>'
+          +'</div>'
+        +'</div>'
+        +'<div style="display:none;margin-top:4px;">'+txRows+'</div>'
+      +'</div>';
+    }).join('');
     return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
         <div><div style="font-weight:700;font-size:15px;">${owner.name}</div>
