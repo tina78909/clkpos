@@ -44,7 +44,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .btn-full{width:100%;}
 .error-msg{color:var(--danger);font-size:13px;margin-top:10px;text-align:center;}
 #app{display:none;flex-direction:column;min-height:100vh;}
-.topnav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
+.topnav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 20px;padding-top:env(safe-area-inset-top,0px);height:calc(56px + env(safe-area-inset-top,0px));display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;}
 .topnav-brand{display:flex;align-items:center;gap:8px;}
 .topnav-brand img{height:32px;width:auto;}
 .topnav-right{display:flex;align-items:center;gap:12px;}
