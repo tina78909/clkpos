@@ -848,6 +848,49 @@ select option{background:var(--surface2);}
   </div>
 </div>
 
+<!-- EDIT EXPENSE -->
+<div class="modal-overlay" id="modal-edit-expense">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">✏️ 修改支出</div>
+      <button class="modal-close" onclick="closeModal('modal-edit-expense')">✕</button>
+    </div>
+    <input type="hidden" id="editing-expense-id">
+    <div class="form-row">
+      <div class="field-group">
+        <label class="field-label">金額</label>
+        <input type="number" id="edit-expense-amount" min="0">
+      </div>
+      <div class="field-group">
+        <label class="field-label">類別</label>
+        <select id="edit-expense-category">
+          <option value="staff">工讀生費用</option>
+          <option value="shipping">運費</option>
+          <option value="purchase">進貨</option>
+          <option value="rent">店租</option>
+          <option value="other">其他</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-group">
+      <label class="field-label">品項說明</label>
+      <input type="text" id="edit-expense-item">
+    </div>
+    <div class="field-group">
+      <label class="field-label">日期</label>
+      <input type="date" id="edit-expense-date">
+    </div>
+    <div class="field-group">
+      <label class="field-label">備註（選填）</label>
+      <input type="text" id="edit-expense-note">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-edit-expense')">取消</button>
+      <button class="btn btn-primary" onclick="saveEditExpense()">💾 儲存</button>
+    </div>
+  </div>
+</div>
+
 <!-- LIGHTNING -->
 <div class="modal-overlay" id="modal-lightning">
   <div class="modal">
@@ -2900,6 +2943,38 @@ window.submitExpense = async function() {
   showToast('✅ 支出已記錄');
 };
 
+window.openEditExpense = function(id) {
+  const e = allExpenses.find(x=>x.id===id); if(!e) return;
+  document.getElementById('editing-expense-id').value = id;
+  document.getElementById('edit-expense-amount').value = e.amount||0;
+  document.getElementById('edit-expense-category').value = e.category||'other';
+  document.getElementById('edit-expense-item').value = e.item||'';
+  const dateStr = typeof e.expenseDate==='string' ? e.expenseDate
+    : (e.expenseDate?.toDate ? e.expenseDate.toDate().toISOString().slice(0,10) : '');
+  document.getElementById('edit-expense-date').value = dateStr;
+  document.getElementById('edit-expense-note').value = e.note||'';
+  openModal('modal-edit-expense');
+};
+
+window.saveEditExpense = async function() {
+  const id     = document.getElementById('editing-expense-id').value;
+  const amount = parseFloat(document.getElementById('edit-expense-amount').value);
+  const category = document.getElementById('edit-expense-category').value;
+  const item   = document.getElementById('edit-expense-item').value.trim();
+  const date   = document.getElementById('edit-expense-date').value;
+  const note   = document.getElementById('edit-expense-note').value.trim();
+  if(!amount||amount<=0){ showToast('請填寫金額'); return; }
+  if(!item){ showToast('請填寫品項說明'); return; }
+  await updateDoc(doc(db,'expenses',id),{
+    amount, category, item, note,
+    expenseDate: date,
+    updatedAt: serverTimestamp(),
+    updatedBy: currentUser.uid, updatedByEmail: currentUser.email
+  });
+  closeModal('modal-edit-expense');
+  showToast('✅ 支出已更新');
+};
+
 window.deleteExpense = async function(id) {
   if(!confirm('確定刪除此支出記錄？')) return;
   await deleteDoc(doc(db,'expenses',id));
@@ -2922,11 +2997,15 @@ window.renderExpenseList = function() {
       <div><span class="badge badge-pending">${catName[e.category]||e.category}</span> <span style="font-size:13px;">${e.item}</span></div>
       <div style="display:flex;align-items:center;gap:8px;">
         <span style="font-size:17px;font-weight:700;color:var(--danger);">-$${(e.amount||0).toLocaleString()}</span>
+        <button class="btn btn-ghost btn-xs" data-edit-expense="${e.id}">✏️</button>
         <button class="btn btn-ghost btn-xs" data-del-expense="${e.id}">🗑️</button>
       </div>
     </div>
     <div class="tx-meta"><span>${typeof e.expenseDate==='string'?e.expenseDate:(e.expenseDate?.toDate?e.expenseDate.toDate().toISOString().slice(0,10):'')}</span><span>👤 ${e.createdByEmail||''}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
   </div>`).join('');
+  el.querySelectorAll('[data-edit-expense]').forEach(btn=>{
+    btn.addEventListener('click',()=>openEditExpense(btn.dataset.editExpense));
+  });
   el.querySelectorAll('[data-del-expense]').forEach(btn=>{
     btn.addEventListener('click',()=>deleteExpense(btn.dataset.delExpense));
   });
