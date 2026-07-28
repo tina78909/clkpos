@@ -1191,7 +1191,7 @@ async function renderDashboard() {
   const settledProdsSet = new Set();
   Object.values(allProducts).filter(p=>{
     if(!p.completedAt||p.deleted) return false;
-    const ct = p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt));
     return ct>=startDate && ct<endDate && (p.status==='completed'||p.status==='scrapped') && p.type==='owner';
   }).forEach(prod=>{
     if(settledProdsSet.has(prod.id)) return;
@@ -2790,7 +2790,7 @@ window.downloadReport = async function() {
   const seenS=new Set();
   Object.values(allProducts).filter(p=>{
     if(!p.completedAt||p.deleted||p.type!=='owner') return false;
-    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt||0);
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     return ct>=start&&ct<end&&(p.status==='completed'||p.status==='scrapped');
   }).forEach(prod=>{
     if(seenS.has(prod.id)) return;
@@ -3086,7 +3086,7 @@ window.downloadSettlementReport = async function(day, selYear, selMonth) {
   const wb=XLSX.utils.book_new();
   const targetProds=Object.values(allProducts).filter(p=>{
     if(!p.completedAt||p.deleted||p.type!=='owner') return false;
-    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
     const owner=getOwnerByCell(p.cellId);
     return owner&&owner.settleDay===day;
@@ -3266,6 +3266,20 @@ window.switchSettleDay = function(day, el) {
   window.renderSettlementBoard();
 };
 
+// 取得刮板最後一筆交易的日期（用於判斷歸屬月份）
+function getLastTxDate(prodId) {
+  const txs = allTxs.filter(tx => tx.productId === prodId);
+  if(!txs.length) return null;
+  // 找 createdAt 最大的那筆
+  let latest = null;
+  txs.forEach(tx => {
+    const d = tx.createdAt?.toDate ? tx.createdAt.toDate() : (tx.createdAt ? new Date(tx.createdAt) : null);
+    if(d && (!latest || d > latest)) latest = d;
+  });
+  return latest;
+}
+
+
 window.renderSettlementBoard = function() {
   const el = document.getElementById('settlement-board'); if(!el) return;
   const now = new Date();
@@ -3297,7 +3311,7 @@ window.renderSettlementBoard = function() {
   }
   const targetProds=Object.values(allProducts).filter(p=>{
     if(!p.completedAt||p.deleted||p.type!=='owner') return false;
-    const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
     const owner=getOwnerByCell(p.cellId);
     return owner&&owner.settleDay===day;
