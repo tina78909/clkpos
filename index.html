@@ -953,6 +953,10 @@ select option{background:var(--surface2);}
     </div>
 
     <div class="field-group">
+      <label class="field-label">交易日期 <span style="color:var(--text3);font-size:11px;">（補登時可修改）</span></label>
+      <input type="date" id="lightning-date" style="width:100%;">
+    </div>
+    <div class="field-group">
       <label class="field-label">付款方式</label>
       <select id="lightning-payment" onchange="toggleLightningTransfer()"><option value="cash">現金</option><option value="transfer">轉帳</option></select>
     </div>
@@ -2574,9 +2578,14 @@ window.confirmScrap = async function() {
 
 // ===== LIGHTNING =====
 window.openLightningModal = function() {
-  ['lightning-price','lightning-draws','lightning-amount','lightning-note','lightning-transfer-code'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['lightning-price','lightning-draws','lightning-amount','lightning-note','lightning-transfer-code',
+   'lightning-store-amount','lightning-store-note','lightning-rent-amount','lightning-rent-start','lightning-rent-end',
+   'lightning-owner-price','lightning-owner-draws','lightning-owner-amount'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   if(document.getElementById('lightning-transfer-confirmed')) document.getElementById('lightning-transfer-confirmed').checked=false;
   document.getElementById('lightning-transfer-section').classList.add('hidden');
+  // 預設交易日期為今天
+  const ldEl = document.getElementById('lightning-date');
+  if(ldEl) ldEl.value = new Date().toISOString().split('T')[0];
   toggleLightningOwner(); openModal('modal-lightning');
 };
 window.toggleLightningOwner = function() {
@@ -2633,6 +2642,17 @@ window.openLightningModal = function() {
 window.submitLightning = async function() {
   const type    = document.getElementById('lightning-type').value;
   const payment = document.getElementById('lightning-payment').value;
+  // 交易日期（補登用）
+  const ldVal = document.getElementById('lightning-date')?.value;
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isBackdate = ldVal && ldVal !== todayStr;
+  let lightningTs;
+  if(isBackdate) {
+    const [ly,lm,ld] = ldVal.split('-').map(Number);
+    lightningTs = Timestamp.fromDate(new Date(ly,lm-1,ld,12,0,0));
+  } else {
+    lightningTs = serverTimestamp();
+  }
   const transferConfirmed = document.getElementById('lightning-transfer-confirmed')?.checked;
   const paymentStatus = (payment!=='transfer'||transferConfirmed) ? 'confirmed' : 'pending';
   const transferCode  = document.getElementById('lightning-transfer-code').value.trim();
@@ -2650,7 +2670,7 @@ window.submitLightning = async function() {
       transferCode: payment==='transfer'?transferCode:null,
       note, batchCompleted:paymentStatus==='confirmed',
       finalAmount: paymentStatus==='confirmed'?amount:null,
-      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdAt:lightningTs, createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'store_item'
     });
     closeModal('modal-lightning');
@@ -2677,7 +2697,7 @@ window.submitLightning = async function() {
       transferCode: payment==='transfer'?transferCode:null,
       note, batchCompleted:true, finalAmount:amount,
       rentStart, rentEnd,
-      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdAt:lightningTs, createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'rent'
     });
     closeModal('modal-lightning');
@@ -2699,7 +2719,7 @@ window.submitLightning = async function() {
       totalDraws:draws, unitPrice:price, currentPrice:price,
       tiers:[], drawnCount:draws, status:'completed',
       totalRevenue:paymentStatus==='confirmed'?amount:0,
-      finalAmount:amount, createdAt:serverTimestamp(), completedAt:serverTimestamp(), isLightning:true
+      finalAmount:amount, createdAt:lightningTs, completedAt:serverTimestamp(), isLightning:true
     });
     await addDoc(collection(db,'transactions'),{
       productId:prodRef.id, productName:'閃電登帳',
@@ -2707,7 +2727,7 @@ window.submitLightning = async function() {
       qty:draws, amount, paymentMethod:payment, paymentStatus,
       transferCode:payment==='transfer'?transferCode:null,
       note:ownerNote, batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
-      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdAt:lightningTs, createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'owner'
     });
     closeModal('modal-lightning');
@@ -2727,7 +2747,7 @@ window.submitLightning = async function() {
       totalDraws:draws, unitPrice:price, currentPrice:price,
       tiers:[], drawnCount:draws, status:'completed',
       totalRevenue:paymentStatus==='confirmed'?amount:0,
-      finalAmount:amount, createdAt:serverTimestamp(), completedAt:serverTimestamp(), isLightning:true
+      finalAmount:amount, createdAt:lightningTs, completedAt:serverTimestamp(), isLightning:true
     });
     await addDoc(collection(db,'transactions'),{
       productId:prodRef.id, productName:'閃電登帳',
@@ -2735,7 +2755,7 @@ window.submitLightning = async function() {
       qty:draws, amount, paymentMethod:payment, paymentStatus,
       transferCode:payment==='transfer'?transferCode:null,
       note:scratchNote, batchCompleted:paymentStatus==='confirmed', finalAmount:amount,
-      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdAt:lightningTs, createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isLightning:true, lightningType:'store_scratch'
     });
     closeModal('modal-lightning');
