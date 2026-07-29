@@ -848,6 +848,41 @@ select option{background:var(--surface2);}
   </div>
 </div>
 
+<!-- REFUND -->
+<div class="modal-overlay" id="modal-refund">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">💰 退費記錄</div>
+      <button class="modal-close" onclick="closeModal('modal-refund')">✕</button>
+    </div>
+    <input type="hidden" id="refund-product-id">
+    <div id="refund-product-info" class="alert alert-info" style="margin-bottom:12px;"></div>
+    <div class="field-group">
+      <label class="field-label">退費金額（正數，系統自動轉為負數）</label>
+      <input type="number" id="refund-amount" min="1" placeholder="例：2000">
+    </div>
+    <div class="field-group">
+      <label class="field-label">退費原因</label>
+      <input type="text" id="refund-reason" placeholder="例：格主退租，剩餘18刮退費50%">
+    </div>
+    <div class="field-group">
+      <label class="field-label">付款方式</label>
+      <select id="refund-payment">
+        <option value="cash">現金</option>
+        <option value="transfer">轉帳</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label class="field-label">退費日期</label>
+      <input type="date" id="refund-date">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-refund')">取消</button>
+      <button class="btn btn-danger" onclick="submitRefund()">💰 確認退費</button>
+    </div>
+  </div>
+</div>
+
 <!-- EDIT EXPENSE -->
 <div class="modal-overlay" id="modal-edit-expense">
   <div class="modal">
@@ -1296,7 +1331,7 @@ window.renderRecentTx = function() {
     return '<div class="tx-item">'
       +'<div class="tx-header">'
       +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">'+pType+pStatus+completedTag+'<span style="font-size:13px;color:var(--text2);">'+(tx.isLightning?(tx.note||'閃電登帳'):tx.productName||'')+'</span></div>'
-      +'<div style="display:flex;align-items:center;gap:8px;"><div class="tx-amount">$'+(tx.amount||0).toLocaleString()+'</div>'+editBtn+'</div>'
+      +'<div style="display:flex;align-items:center;gap:8px;"><div class="tx-amount" style="color:'+(tx.amount<0?'var(--danger)':'var(--accent3)')+';">'+(tx.amount<0?'退費 -$'+Math.abs(tx.amount||0).toLocaleString():'$'+(tx.amount||0).toLocaleString())+'</div>'+editBtn+'</div>'
       +'</div>'
       +'<div class="tx-meta">'
       +'<span>'+dt+'</span>'
@@ -1832,6 +1867,9 @@ function renderProductsList() {
   el.querySelectorAll('[data-action-pid]').forEach(btn=>{
     btn.addEventListener('click', ()=>openProductActionModal(btn.dataset.actionPid, btn.dataset.action));
   });
+  el.querySelectorAll('[data-refund-pid]').forEach(btn=>{
+    btn.addEventListener('click', ()=>openRefundModal(btn.dataset.refundPid));
+  });
   el.querySelectorAll('[data-price-pid]').forEach(btn=>{
     btn.addEventListener('click', ()=>openPriceModalFromList(btn.dataset.pricePid));
   });
@@ -1848,8 +1886,10 @@ function buildProductActionBtns(p) {
     }
   } else if(p.status==='active') {
     btns += '<button class="btn btn-xs" style="background:#4a1c1c;color:#ff9999;border:1px solid #ff6b6b;" data-action-pid="'+p.id+'" data-action="scrap">🗑️ 廢套</button>';
+    btns += '<button class="btn btn-xs" style="background:rgba(255,107,107,.2);color:var(--danger);" data-refund-pid="'+p.id+'">💰 退費</button>';
   } else if(p.status==='completed') {
-    // 已完刮：可撤銷恢復進行中
+    // 已完刮：可撤銷恢復進行中或退費
+    btns += '<button class="btn btn-xs" style="background:rgba(255,107,107,.2);color:var(--danger);" data-refund-pid="'+p.id+'">💰 退費</button>';
     btns += '<button class="btn btn-xs" style="background:rgba(108,143,255,.2);color:var(--accent);" data-action-pid="'+p.id+'" data-action="revert">↩️ 撤銷完刮</button>';
   }
   return btns;
@@ -2066,7 +2106,7 @@ window.submitTransaction = async function() {
   const transferCode  = document.getElementById('tx-transfer-code').value.trim();
   const transferConfirmed = document.getElementById('tx-transfer-confirmed')?.checked;
   const completeOnSubmit  = document.getElementById('tx-complete-on-submit')?.checked;
-  if(isNaN(amount)||amount<0){showToast('請填寫金額');return;}
+  if(isNaN(amount)){showToast('請填寫金額');return;}
   const paymentStatus = (payment!=='transfer'||transferConfirmed) ? 'confirmed' : 'pending';
 
   // 若選完刮出貨但此筆為待核帳，警告
@@ -2662,7 +2702,7 @@ window.submitLightning = async function() {
     // 店內商品登帳
     const amount = parseFloat(document.getElementById('lightning-item-amount').value);
     const note   = document.getElementById('lightning-item-note').value.trim();
-    if(isNaN(amount)||amount<0){showToast('請填寫金額');return;}
+    if(isNaN(amount)){showToast('請填寫金額');return;}
     await addDoc(collection(db,'transactions'),{
       productId:null, productName: note||'店內商品',
       productType:'store', cellId:null, ownerId:null,
@@ -2899,6 +2939,50 @@ window.downloadReport = async function() {
 
   XLSX.writeFile(wb,'CLK-POS-'+monthStr+'.xlsx');
   showToast('📥 報表下載中...');
+};
+
+
+// ===== 退費功能 =====
+window.openRefundModal = function(productId) {
+  const p = allProducts[productId]; if(!p) return;
+  document.getElementById('refund-product-id').value = productId;
+  const boardTxs = allTxs.filter(tx=>tx.productId===productId && tx.paymentStatus==='confirmed');
+  const totalConfirmed = boardTxs.reduce((s,tx)=>s+(tx.amount||0),0);
+  document.getElementById('refund-product-info').innerHTML =
+    '<strong>'+p.name+'</strong>（'+p.cellId+'）<br>已確認收款：<strong>$'+totalConfirmed.toLocaleString()+'</strong>・請填寫要退還的金額';
+  document.getElementById('refund-amount').value = '';
+  document.getElementById('refund-reason').value = '';
+  document.getElementById('refund-payment').value = 'cash';
+  const rdEl = document.getElementById('refund-date');
+  if(rdEl) rdEl.value = new Date().toISOString().split('T')[0];
+  openModal('modal-refund');
+};
+
+window.submitRefund = async function() {
+  const productId = document.getElementById('refund-product-id').value;
+  const amount    = parseFloat(document.getElementById('refund-amount').value);
+  const reason    = document.getElementById('refund-reason').value.trim();
+  const payment   = document.getElementById('refund-payment').value;
+  const dateVal   = document.getElementById('refund-date').value;
+  if(!amount || amount <= 0){ showToast('請填寫退費金額'); return; }
+  if(!reason){ showToast('請填寫退費原因'); return; }
+  const p = allProducts[productId]; if(!p) return;
+  // 用負數金額記錄退費
+  const [ry,rm,rd] = dateVal.split('-').map(Number);
+  const refundTs = Timestamp.fromDate(new Date(ry,rm-1,rd,12,0,0));
+  await addDoc(collection(db,'transactions'),{
+    productId, productName: p.name,
+    productType: p.type, cellId: p.cellId||null, ownerId: p.ownerId||null,
+    qty: 1, amount: -amount,  // 負數
+    paymentMethod: payment, paymentStatus: 'confirmed',
+    batchCompleted: false,
+    note: '💰 退費・'+reason,
+    isRefund: true,
+    createdAt: refundTs,
+    createdBy: currentUser.uid, createdByEmail: currentUser.email
+  });
+  closeModal('modal-refund');
+  showToast('✅ 退費記錄已建立（-$'+amount.toLocaleString()+'）');
 };
 
 
