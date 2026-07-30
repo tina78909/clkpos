@@ -1258,7 +1258,7 @@ async function renderDashboard() {
   document.getElementById('stat-pending').textContent = '$'+pendingTotal.toLocaleString();
   document.getElementById('stat-count').textContent = filtered.length;
 
-  const allPending = allTxs.filter(tx=>tx.paymentStatus==='pending');
+  const allPending = allTxs.filter(tx=>tx.paymentStatus==='pending'&&tx.paymentMethod==='transfer');
   document.getElementById('pending-alert').classList.toggle('hidden', allPending.length===0);
   document.getElementById('pending-count').textContent = allPending.length;
 
@@ -2312,8 +2312,27 @@ window.saveEditTx = async function() {
   const amount=parseFloat(document.getElementById('edit-tx-amount').value)||0;
   const payment=document.getElementById('edit-tx-payment').value;
   const note=document.getElementById('edit-tx-note').value.trim();
-  // 找出原始交易，同步更新商品數據
+
+  // 找出原始交易
   const oldTx = allTxs.find(t=>t.id===txId);
+
+  // 若原本是轉帳待核帳，現在改成現金 → 跳出確認
+  let newPaymentStatus = oldTx?.paymentStatus || 'confirmed';
+  if(oldTx?.paymentMethod==='transfer' && oldTx?.paymentStatus==='pending' && payment==='cash') {
+    const confirmed = confirm(
+      '⚠️ 注意！
+
+此筆交易原本是轉帳付款，尚未老闆核帳。
+
+確定要改為現金嗎？
+（改為現金後將自動標記為「已確認」，不需再核帳）'
+    );
+    if(!confirmed) return;
+    newPaymentStatus = 'confirmed'; // 現金自動確認
+  } else if(payment==='cash') {
+    newPaymentStatus = 'confirmed'; // 現金一律確認
+  }
+
   if(oldTx) {
     const prod = allProducts[oldTx.productId];
     if(prod) {
@@ -2322,6 +2341,8 @@ window.saveEditTx = async function() {
       let newRevenue = prod.totalRevenue||0;
       if(oldTx.paymentStatus==='confirmed') {
         newRevenue = Math.max(0, newRevenue - (oldTx.amount||0) + amount);
+      } else if(newPaymentStatus==='confirmed') {
+        newRevenue = newRevenue + amount; // 原本pending，現在確認
       }
       await updateDoc(doc(db,'products',oldTx.productId), {
         drawnCount: newDrawn,
@@ -2329,9 +2350,14 @@ window.saveEditTx = async function() {
       });
     }
   }
-  await updateDoc(doc(db,'transactions',txId),{qty,amount,paymentMethod:payment,note,editedBy:currentUser.email,editedAt:serverTimestamp()});
+
+  await updateDoc(doc(db,'transactions',txId),{
+    qty, amount, paymentMethod: payment,
+    paymentStatus: newPaymentStatus,
+    note, editedBy: currentUser.email, editedAt: serverTimestamp()
+  });
   closeModal('modal-edit-tx');
-  showToast('✅ 交易已更新，商品進度同步');
+  showToast('✅ 交易已更新');
 };
 
 window.deleteTx = async function() {
