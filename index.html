@@ -2986,6 +2986,89 @@ window.submitRefund = async function() {
 };
 
 
+// ===== 轉帳核帳看板 =====
+window.renderTransferList = function() {
+  const el = document.getElementById('transfer-list'); if(!el) return;
+  // 找所有待核帳的轉帳交易
+  const pendingTxs = allTxs.filter(tx =>
+    tx.paymentMethod === 'transfer' && tx.paymentStatus === 'pending'
+  ).sort((a,b)=>{
+    const da = a.createdAt?.toDate?a.createdAt.toDate():new Date(a.createdAt||0);
+    const db_ = b.createdAt?.toDate?b.createdAt.toDate():new Date(b.createdAt||0);
+    return da - db_;
+  });
+
+  // 更新 badge
+  const badge = document.getElementById('transfer-count-badge');
+  if(badge) badge.textContent = pendingTxs.length + '筆待核';
+
+  if(pendingTxs.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">✅</div><p>目前無待核帳轉帳</p></div>';
+    return;
+  }
+
+  el.innerHTML = pendingTxs.map(tx => {
+    const dt = tx.createdAt?.toDate ? tx.createdAt.toDate().toLocaleDateString('zh-TW') : '-';
+    const prod = allProducts[tx.productId];
+    const owner = tx.ownerId ? allOwners[tx.ownerId] : null;
+    const prodName = tx.isLightning ? (tx.note||'閃電登帳') : (tx.productName || prod?.name || '-');
+    return `<div class="tx-item" style="border:1px solid var(--warning);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;">
+      <div class="tx-header">
+        <div>
+          <div style="font-weight:600;">${prodName}</div>
+          <div style="font-size:12px;color:var(--text2);">
+            ${owner?owner.name+'・':''}${tx.cellId||'店內'}・${dt}
+            ${tx.transferCode?'・末五碼：<strong>'+tx.transferCode+'</strong>':''}
+          </div>
+          ${tx.note&&!tx.isLightning?`<div style="font-size:12px;color:var(--text3);">備註：${tx.note}</div>`:''}
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:18px;font-weight:700;color:var(--warning);">$${(tx.amount||0).toLocaleString()}</div>
+          <button class="btn btn-success btn-sm mt-4" data-confirm-tx="${tx.id}" data-prod-id="${tx.productId||''}">✅ 確認入帳</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 綁定確認按鈕
+  el.querySelectorAll('[data-confirm-tx]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const txId = btn.dataset.confirmTx;
+      const prodId = btn.dataset.prodId;
+      btn.disabled = true;
+      btn.textContent = '處理中...';
+
+      await updateDoc(doc(db,'transactions',txId), {
+        paymentStatus: 'confirmed',
+        confirmedAt: serverTimestamp(),
+        confirmedBy: currentUser.uid
+      });
+
+      // 確認後檢查該刮板是否已完刮且無待核帳
+      if(prodId) {
+        const prod = allProducts[prodId];
+        if(prod && (prod.status==='completed'||prod.status==='scrapped')) {
+          const boardTxs = allTxs.filter(t=>t.productId===prodId);
+          const stillPending = boardTxs.filter(t=>t.id!==txId&&t.paymentStatus==='pending');
+          if(stillPending.length===0) {
+            const confirmedTotal = boardTxs
+              .filter(t=>t.id===txId||t.paymentStatus==='confirmed')
+              .reduce((s,t)=>s+(t.amount||0),0);
+            // 更新刮板 finalAmount 並標記 batchCompleted
+            await updateDoc(doc(db,'products',prodId),{finalAmount:confirmedTotal});
+            const toUpdate = boardTxs.filter(t=>t.paymentStatus==='confirmed'||t.id===txId);
+            await Promise.all(toUpdate.map(t=>
+              updateDoc(doc(db,'transactions',t.id),{batchCompleted:true,finalAmount:confirmedTotal})
+            ));
+          }
+        }
+      }
+      showToast('✅ 已確認入帳！');
+    });
+  });
+};
+
+
 window.openModal = id=>document.getElementById(id).classList.add('open');
 window.closeModal = function(id) {
   document.getElementById(id).classList.remove('open');
