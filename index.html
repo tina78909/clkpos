@@ -2319,14 +2319,7 @@ window.saveEditTx = async function() {
   // 若原本是轉帳待核帳，現在改成現金 → 跳出確認
   let newPaymentStatus = oldTx?.paymentStatus || 'confirmed';
   if(oldTx?.paymentMethod==='transfer' && oldTx?.paymentStatus==='pending' && payment==='cash') {
-    const confirmed = confirm(
-      '⚠️ 注意！
-
-此筆交易原本是轉帳付款，尚未老闆核帳。
-
-確定要改為現金嗎？
-（改為現金後將自動標記為「已確認」，不需再核帳）'
-    );
+    const confirmed = confirm('⚠️ 注意！此筆交易原本是轉帳待核帳，確定要改為現金嗎？\n改為現金後將自動標記為已確認，不需再核帳。');
     if(!confirmed) return;
     newPaymentStatus = 'confirmed'; // 現金自動確認
   } else if(payment==='cash') {
