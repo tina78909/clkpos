@@ -371,6 +371,11 @@ select option{background:var(--surface2);}
         <button class="toggle-btn" onclick="setProductFilter('offline',this)">已下架</button>
         <button class="toggle-btn" onclick="setProductFilter('all',this)">全部</button>
       </div>
+      <div id="product-month-filter-wrap" class="hidden" style="margin-bottom:12px;">
+        <select id="product-month-filter" style="width:100%;" onchange="onProductMonthFilterChange()">
+          <option value="all">全部完刮月份</option>
+        </select>
+      </div>
       <div id="products-list"><div class="empty-state"><div class="icon">📦</div><p>尚無商品</p></div></div>
     </div>
 
@@ -1812,23 +1817,72 @@ window.openEditProductModal = function(productId) {
   }
   openModal('modal-new-product');
 };
+let productMonthFilter = 'all';
 window.setProductFilter = function(status,el){
   productStatusFilter=status;
   document.querySelectorAll('#page-products .toggle-btn').forEach(b=>b.classList.remove('active'));
-  el.classList.add('active'); renderProductsList();
+  el.classList.add('active');
+  const monthWrap = document.getElementById('product-month-filter-wrap');
+  if(status==='completed') {
+    monthWrap.classList.remove('hidden');
+    populateProductMonthFilter();
+  } else {
+    monthWrap.classList.add('hidden');
+    productMonthFilter = 'all';
+  }
+  renderProductsList();
 };
+
+window.onProductMonthFilterChange = function(){
+  productMonthFilter = document.getElementById('product-month-filter').value;
+  renderProductsList();
+};
+
+// 依 completedAt 彙整可選的完刮月份，並盡量保留使用者目前的選擇
+function populateProductMonthFilter(){
+  const sel = document.getElementById('product-month-filter');
+  if(!sel) return;
+  const months = new Set();
+  Object.values(allProducts).forEach(p=>{
+    if(p.deleted || p.status!=='completed' || !p.completedAt) return;
+    const d = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
+    months.add(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
+  });
+  const sorted = Array.from(months).sort().reverse();
+  const prevVal = productMonthFilter || 'all';
+  sel.innerHTML = '<option value="all">全部完刮月份</option>' + sorted.map(key=>{
+    const [y,m] = key.split('-');
+    return `<option value="${key}">${y}/${parseInt(m)}月完刮</option>`;
+  }).join('');
+  if(prevVal==='all' || sorted.includes(prevVal)) { sel.value = prevVal; productMonthFilter = prevVal; }
+  else { sel.value = 'all'; productMonthFilter = 'all'; }
+}
 
 function renderProductsList() {
   const el=document.getElementById('products-list');
   let products=Object.values(allProducts).filter(p=>!p.deleted); // 隱藏已刪除
   if(productStatusFilter!=='all') products=products.filter(p=>p.status===productStatusFilter);
+  if(productStatusFilter==='completed') {
+    populateProductMonthFilter();
+    if(productMonthFilter!=='all') {
+      products=products.filter(p=>{
+        if(!p.completedAt) return false;
+        const d = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
+        return (d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'))===productMonthFilter;
+      });
+    }
+  }
   if(productNameFilter) products=products.filter(p=>p.name.includes(productNameFilter)||( p.barcode&&p.barcode.includes(productNameFilter))||(p.cellId&&p.cellId.includes(productNameFilter)));
   // 格主篩選
   const ownerFilter = document.getElementById('product-owner-filter')?.value||'';
   if(ownerFilter==='__store__') products=products.filter(p=>p.type==='store');
   else if(ownerFilter) products=products.filter(p=>p.ownerId===ownerFilter);
   if(products.length===0){el.innerHTML='<div class="empty-state"><div class="icon">📦</div><p>無商品</p></div>';return;}
-  products.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  if(productStatusFilter==='completed') {
+    products.sort((a,b)=>(b.completedAt?.seconds||0)-(a.completedAt?.seconds||0));
+  } else {
+    products.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+  }
   el.innerHTML=products.map(p=>{
     const owner=p.cellId?getOwnerByCell(p.cellId):null;
     const isBlindboxCard = p.subType==='blindbox';
