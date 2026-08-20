@@ -594,6 +594,17 @@ select option{background:var(--surface2);}
       </div>
       <div class="card">
         <div class="card-header">
+          <div class="card-title">📊 支出統整</div>
+          <select id="expense-summary-month-filter" style="font-size:13px;padding:6px 10px;width:auto;" onchange="renderExpenseSummary()"></select>
+        </div>
+        <div id="expense-summary-list"></div>
+        <div style="padding:12px 0;border-top:1px solid var(--border);margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--text2);font-weight:700;">合計</span>
+          <span style="font-size:20px;font-weight:700;color:var(--danger);" id="expense-summary-total">$0</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
           <div class="card-title">📋 支出紀錄</div>
           <select id="expense-month-filter" style="font-size:13px;padding:6px 10px;width:auto;" onchange="renderExpenseList()"></select>
         </div>
@@ -1119,6 +1130,8 @@ function setupRealtimeListeners() {
     // 只有支出頁面月份選單已初始化才更新列表
     const expSel = document.getElementById('expense-month-filter');
     if(expSel && expSel.options.length > 0) window.renderExpenseList();
+    const expSumSel = document.getElementById('expense-summary-month-filter');
+    if(expSumSel) window.renderExpenseSummary();
   });
 
   onSnapshot(query(collection(db,'transactions'), orderBy('createdAt','desc')), snap => {
@@ -1163,7 +1176,7 @@ window.switchPage = function(page, el) {
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
   if(page==='print') initPrintPage();
-  if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); }
+  if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); renderExpenseSummary(); }
 };
 window.switchToPick = function() {
   dashboardMode = 'pick';
@@ -3170,6 +3183,53 @@ function populateExpenseMonthFilter() {
   sel.innerHTML = '<option value="">全部</option>' + months.map(m=>`<option value="${m}" ${m===cur?'selected':''}>${m}</option>`).join('');
 }
 
+// 支出統整：預設鎖定當月，可切換其他月份查看各類別加總
+let expenseSummaryMonthInited = false;
+function populateExpenseSummaryMonthFilter() {
+  const sel = document.getElementById('expense-summary-month-filter');
+  if(!sel) return;
+  const toDateStr=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+  const curMonth = new Date().toISOString().slice(0,7);
+  const months = new Set(allExpenses.map(e=>toDateStr(e.expenseDate).slice(0,7)).filter(Boolean));
+  months.add(curMonth); // 確保當月一定在選單中，即使尚無資料
+  const sortedMonths = [...months].sort().reverse();
+  const keepVal = expenseSummaryMonthInited ? sel.value : curMonth;
+  sel.innerHTML = '<option value="">全部月份</option>' + sortedMonths.map(m=>`<option value="${m}">${m}</option>`).join('');
+  sel.value = keepVal || curMonth;
+  expenseSummaryMonthInited = true;
+}
+
+window.renderExpenseSummary = function() {
+  populateExpenseSummaryMonthFilter();
+  const sel = document.getElementById('expense-summary-month-filter');
+  const filter = sel?.value||'';
+  const toDS=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+  const list = filter ? allExpenses.filter(e=>toDS(e.expenseDate).startsWith(filter)) : allExpenses;
+  const el = document.getElementById('expense-summary-list');
+  if(!el) return;
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+  const catOrder = ['salary','shipping','purchase','rent','other'];
+  const totals = {};
+  list.forEach(e=>{
+    const key = e.category==='staff' ? 'salary' : (e.category||'other');
+    totals[key] = (totals[key]||0) + (e.amount||0);
+  });
+  const usedCats = catOrder.filter(c=>totals[c]!==undefined);
+  Object.keys(totals).forEach(k=>{ if(!catOrder.includes(k)) usedCats.push(k); }); // 未知類別也一併列出
+  if(list.length===0) {
+    el.innerHTML = '<div class="empty-state" style="padding:16px;"><p>此區間尚無支出記錄</p></div>';
+  } else {
+    el.innerHTML = usedCats.map(c=>`
+      <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text2);">${catName[c]||c}</span>
+        <span style="font-weight:700;color:var(--danger);">$${(totals[c]||0).toLocaleString()}</span>
+      </div>`).join('');
+  }
+  const grandTotal = list.reduce((s,e)=>s+(e.amount||0), 0);
+  const totalEl = document.getElementById('expense-summary-total');
+  if(totalEl) totalEl.textContent = '$'+grandTotal.toLocaleString();
+};
+
 function setupExpenseListener() {
   onSnapshot(collection(db,'expenses'), snap => {
     allExpenses = [];
@@ -3179,6 +3239,7 @@ function setupExpenseListener() {
       return toStr(b.expenseDate).localeCompare(toStr(a.expenseDate));
     });
     renderExpenseList();
+    renderExpenseSummary();
     renderDashboard();
   });
 }
