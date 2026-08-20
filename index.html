@@ -3195,7 +3195,7 @@ function populateExpenseSummaryMonthFilter() {
   const sortedMonths = [...months].sort().reverse();
   const keepVal = expenseSummaryMonthInited ? sel.value : curMonth;
   sel.innerHTML = '<option value="">全部月份</option>' + sortedMonths.map(m=>`<option value="${m}">${m}</option>`).join('');
-  sel.value = keepVal || curMonth;
+  sel.value = keepVal;
   expenseSummaryMonthInited = true;
 }
 
