@@ -571,6 +571,8 @@ select option{background:var(--surface2);}
             <label class="field-label">類別</label>
             <select id="expense-category">
               <option value="salary">工讀生費用</option>
+              <option value="meal">餐費</option>
+              <option value="ownerFee">格主費用</option>
               <option value="shipping">運費</option>
               <option value="purchase">進貨</option>
               <option value="rent">店租水電</option>
@@ -916,6 +918,8 @@ select option{background:var(--surface2);}
         <label class="field-label">類別</label>
         <select id="edit-expense-category">
           <option value="staff">工讀生費用</option>
+          <option value="meal">餐費</option>
+          <option value="ownerFee">格主費用</option>
           <option value="shipping">運費</option>
           <option value="purchase">進貨</option>
           <option value="rent">店租</option>
@@ -3018,7 +3022,7 @@ window.downloadReport = async function() {
 
   // ===== 支出明細 =====
   const ws4data=[['日期','類別','品項','金額','備註','記錄人']];
-  const catName={staff:'工讀生',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
+  const catName={staff:'工讀生',salary:'工讀生',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
   monthExpenses.forEach(e=>ws4data.push([e.expenseDate||'',catName[e.category]||e.category,e.item||'',e.amount||0,e.note||'',e.createdByEmail||'']));
   ws4data.push(['合計','','',totalExp,'','']);
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ws4data), '支出明細');
@@ -3199,6 +3203,12 @@ function populateExpenseSummaryMonthFilter() {
   expenseSummaryMonthInited = true;
 }
 
+let expenseSummaryExpandedCat = null;
+window.toggleExpenseSummaryCat = function(cat) {
+  expenseSummaryExpandedCat = (expenseSummaryExpandedCat === cat) ? null : cat;
+  renderExpenseSummary();
+};
+
 window.renderExpenseSummary = function() {
   populateExpenseSummaryMonthFilter();
   const sel = document.getElementById('expense-summary-month-filter');
@@ -3207,23 +3217,57 @@ window.renderExpenseSummary = function() {
   const list = filter ? allExpenses.filter(e=>toDS(e.expenseDate).startsWith(filter)) : allExpenses;
   const el = document.getElementById('expense-summary-list');
   if(!el) return;
-  const catName = {staff:'工讀生費用',salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
-  const catOrder = ['salary','shipping','purchase','rent','other'];
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+  const catOrder = ['salary','meal','ownerFee','shipping','purchase','rent','other'];
+  const normCat = e => e.category==='staff' ? 'salary' : (e.category||'other');
   const totals = {};
+  const groups = {};
   list.forEach(e=>{
-    const key = e.category==='staff' ? 'salary' : (e.category||'other');
+    const key = normCat(e);
     totals[key] = (totals[key]||0) + (e.amount||0);
+    (groups[key] = groups[key]||[]).push(e);
   });
   const usedCats = catOrder.filter(c=>totals[c]!==undefined);
   Object.keys(totals).forEach(k=>{ if(!catOrder.includes(k)) usedCats.push(k); }); // 未知類別也一併列出
   if(list.length===0) {
     el.innerHTML = '<div class="empty-state" style="padding:16px;"><p>此區間尚無支出記錄</p></div>';
   } else {
-    el.innerHTML = usedCats.map(c=>`
-      <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
-        <span style="color:var(--text2);">${catName[c]||c}</span>
-        <span style="font-weight:700;color:var(--danger);">$${(totals[c]||0).toLocaleString()}</span>
-      </div>`).join('');
+    el.innerHTML = usedCats.map(c=>{
+      const isOpen = expenseSummaryExpandedCat === c;
+      const rowHtml = `<div class="flex-between" style="padding:10px 4px;cursor:pointer;" data-summary-cat="${c}">
+          <span style="color:var(--text2);display:flex;align-items:center;gap:6px;">
+            <span style="display:inline-block;font-size:11px;transition:transform .15s;transform:rotate(${isOpen?90:0}deg);">▸</span>
+            ${catName[c]||c}
+          </span>
+          <span style="font-weight:700;color:var(--danger);">$${(totals[c]||0).toLocaleString()}</span>
+        </div>`;
+      let detailHtml = '';
+      if(isOpen) {
+        const items = (groups[c]||[]).slice().sort((a,b)=>toDS(b.expenseDate).localeCompare(toDS(a.expenseDate)));
+        detailHtml = '<div style="padding:0 0 8px 18px;">' + items.map(e=>`
+            <div class="tx-item" style="padding:8px 12px;margin-bottom:6px;">
+              <div class="tx-header">
+                <span style="font-size:13px;">${e.item||''}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-weight:700;color:var(--danger);">-$${(e.amount||0).toLocaleString()}</span>
+                  <button class="btn btn-ghost btn-xs" data-edit-expense="${e.id}">✏️</button>
+                  <button class="btn btn-ghost btn-xs" data-del-expense="${e.id}">🗑️</button>
+                </div>
+              </div>
+              <div class="tx-meta"><span>${toDS(e.expenseDate)}</span><span>👤 ${e.createdByEmail||''}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
+            </div>`).join('') + '</div>';
+      }
+      return `<div style="border-bottom:1px solid var(--border);">${rowHtml}${detailHtml}</div>`;
+    }).join('');
+    el.querySelectorAll('[data-summary-cat]').forEach(row=>{
+      row.addEventListener('click', ()=>toggleExpenseSummaryCat(row.dataset.summaryCat));
+    });
+    el.querySelectorAll('[data-edit-expense]').forEach(btn=>{
+      btn.addEventListener('click', (ev)=>{ ev.stopPropagation(); openEditExpense(btn.dataset.editExpense); });
+    });
+    el.querySelectorAll('[data-del-expense]').forEach(btn=>{
+      btn.addEventListener('click', (ev)=>{ ev.stopPropagation(); deleteExpense(btn.dataset.delExpense); });
+    });
   }
   const grandTotal = list.reduce((s,e)=>s+(e.amount||0), 0);
   const totalEl = document.getElementById('expense-summary-total');
@@ -3312,7 +3356,7 @@ window.renderExpenseList = function() {
   const el = document.getElementById('expense-list');
   if(!el) return;
   if(list.length===0){ el.innerHTML='<div class="empty-state"><div class="icon">💸</div><p>尚無支出記錄</p></div>'; return; }
-  const catName = {staff:'工讀生費用',salary:'工讀生費用',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租',other:'其他'};
   el.innerHTML = list.map(e=>`<div class="tx-item">
     <div class="tx-header">
       <div><span class="badge badge-pending">${catName[e.category]||e.category}</span> <span style="font-size:13px;">${e.item}</span></div>
