@@ -628,6 +628,23 @@ select option{background:var(--surface2);}
         <div id="transfer-list"><div class="empty-state"><div class="icon">✅</div><p>目前無待核帳轉帳</p></div></div>
       </div>
 
+      <div class="card">
+        <div class="card-header"><div class="card-title">💰 格主撥款紀錄</div></div>
+        <div class="form-row" style="margin-bottom:10px;">
+          <select id="payout-year" style="width:auto;" onchange="renderPayoutBoard()"></select>
+          <select id="payout-month" style="width:auto;" onchange="renderPayoutBoard()"></select>
+        </div>
+        <div class="toggle-group" style="margin-bottom:10px;">
+          <button class="toggle-btn active" id="payout-day-1" onclick="switchPayoutDay(1,this)">1號結帳</button>
+          <button class="toggle-btn" id="payout-day-15" onclick="switchPayoutDay(15,this)">15號結帳</button>
+        </div>
+        <div class="toggle-group" style="margin-bottom:12px;">
+          <button class="toggle-btn active" id="payout-tab-pending" onclick="switchPayoutTab('pending',this)">待撥款</button>
+          <button class="toggle-btn" id="payout-tab-done" onclick="switchPayoutTab('done',this)">已完成撥款</button>
+        </div>
+        <div id="payout-board"><div class="empty-state"><div class="icon">💤</div><p>載入中...</p></div></div>
+      </div>
+
     </div>
 
   </div><!-- end main-content -->
@@ -681,13 +698,30 @@ select option{background:var(--surface2);}
     <hr class="divider">
     <!-- 格子管理 -->
     <div class="field-group">
-      <label class="field-label">所屬格子（可多個）</label>
+      <label class="field-label">所屬格子（可多個，各格租金分開設定）</label>
       <div id="cells-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;min-height:32px;"></div>
       <div class="input-row">
-        <input type="text" id="new-cell-input" placeholder="輸入格子號碼，如 A01" onkeydown="if(event.key==='Enter'){addCell();event.preventDefault();}">
-        <button class="btn btn-secondary btn-sm" onclick="addCell()">新增格子</button>
+        <input type="text" id="new-cell-input" placeholder="格子號碼，如 2B004" style="flex:1;" onkeydown="if(event.key==='Enter'){document.getElementById('new-cell-rent-input').focus();event.preventDefault();}">
+        <input type="number" id="new-cell-rent-input" placeholder="租金" min="0" style="width:90px;" onkeydown="if(event.key==='Enter'){addCell();event.preventDefault();}">
+      </div>
+      <div style="display:flex;gap:6px;margin:6px 0;">
+        <button type="button" class="btn btn-ghost btn-xs" onclick="document.getElementById('new-cell-rent-input').value=800">$800</button>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="document.getElementById('new-cell-rent-input').value=1600">$1600</button>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="document.getElementById('new-cell-rent-input').value=2200">$2200</button>
+        <button class="btn btn-secondary btn-sm" onclick="addCell()">＋新增格子</button>
       </div>
     </div>
+
+    <hr class="divider">
+    <!-- 倉儲費 -->
+    <div class="field-group">
+      <label class="field-label">倉儲費（租用層數，0 代表無租用）</label>
+      <div class="form-row">
+        <div class="field-group"><label class="field-label" style="font-weight:400;">$800／層</label><input type="number" id="owner-storage-800" value="0" min="0"></div>
+        <div class="field-group"><label class="field-label" style="font-weight:400;">$1000／層</label><input type="number" id="owner-storage-1000" value="0" min="0"></div>
+      </div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-new-owner')">取消</button>
       <button class="btn btn-primary" id="owner-save-btn" onclick="saveOwner()">儲存格主</button>
@@ -1065,6 +1099,8 @@ let scannerRunning = false, html5QrCode = null;
 let dashboardMode = 'today';
 let productStatusFilter = 'active';
 let pendingCells = []; // 新增格主時暫存格子
+let pendingCellRents = {}; // 新增格主時暫存各格租金 {cellId: rent}
+let allPayouts = []; // 格主撥款紀錄快取
 let LOGO_B64 = ''; // embedded in HTML
 
 // ===== LOGO =====
@@ -1114,7 +1150,7 @@ async function initApp() {
   populateReportMonths();
   setupRealtimeListeners();
   setupExpenseListener();
-  if(isBoss){ renderTransferList(); }
+  if(isBoss){ renderTransferList(); setupPayoutsListener(); }
   // 支出日期預設今天
   setTimeout(()=>{
     const edEl=document.getElementById('expense-date');
@@ -1141,7 +1177,7 @@ function setupRealtimeListeners() {
   onSnapshot(query(collection(db,'transactions'), orderBy('createdAt','desc')), snap => {
     allTxs = []; snap.forEach(d => allTxs.push({id:d.id,...d.data()}));
     renderDashboard(); renderRecentTx();
-    if(isBoss) renderTransferList();
+    if(isBoss) { renderTransferList(); if(document.getElementById('page-boss')?.classList.contains('active')) renderPayoutBoard(); }
     if(currentProduct) loadProductTransactions();
     if(txHistoryProductId && document.getElementById('modal-product-tx-history')?.classList.contains('open')) renderTxHistoryList();
   });
@@ -1179,6 +1215,7 @@ window.switchPage = function(page, el) {
   el.classList.add('active');
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
+  if(page==='boss' && isBoss) renderPayoutBoard();
   if(page==='print') initPrintPage();
   if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); renderExpenseSummary(); }
 };
@@ -1295,7 +1332,7 @@ function renderOwnerPayouts(confirmedTxs) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const completedProds = Object.values(allProducts).filter(p => {
-    if(!p.completedAt||p.deleted) return false;
+    if(!p.completedAt||p.deleted||p.payoutId) return false;
     const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
     return ct >= monthStart && (p.status==='completed'||p.status==='scrapped') && p.type==='owner';
   });
@@ -1407,7 +1444,10 @@ window.openNewOwnerModal = function() {
   document.getElementById('owner-name').value='';
   document.getElementById('owner-fee').value='10';
   document.getElementById('owner-settle-day').value='1';
+  document.getElementById('owner-storage-800').value='0';
+  document.getElementById('owner-storage-1000').value='0';
   pendingCells=[];
+  pendingCellRents={};
   renderCellsList();
   openModal('modal-new-owner');
 };
@@ -1415,21 +1455,36 @@ window.openNewOwnerModal = function() {
 window.addCell = function() {
   const val = document.getElementById('new-cell-input').value.trim().toUpperCase();
   if(!val) return;
+  const rentInput = document.getElementById('new-cell-rent-input');
+  const rent = parseInt(rentInput?.value)||0;
   // 確認不重複
   const existing = getAllCells().map(c=>c.cellId);
   if(existing.includes(val)||pendingCells.includes(val)){showToast('此格子編號已存在');return;}
   pendingCells.push(val);
+  pendingCellRents[val] = rent;
   document.getElementById('new-cell-input').value='';
+  if(rentInput) rentInput.value='';
   renderCellsList();
 };
 
 function renderCellsList() {
   document.getElementById('cells-list').innerHTML = pendingCells.map(c=>`
     <span style="display:inline-flex;align-items:center;gap:4px;background:rgba(108,143,255,.15);color:var(--accent);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;">
-      ${c}<button onclick="removeCell('${c}')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;line-height:1;padding:0 2px;">×</button>
+      ${c} <span style="color:var(--text2);font-weight:400;">$${(pendingCellRents[c]||0).toLocaleString()}</span>
+      <button onclick="editCellRent('${c}')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:12px;line-height:1;padding:0 2px;" title="修改租金">✏️</button>
+      <button onclick="removeCell('${c}')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;line-height:1;padding:0 2px;">×</button>
     </span>`).join('');
 }
-window.removeCell = function(c) { pendingCells=pendingCells.filter(x=>x!==c); renderCellsList(); };
+window.editCellRent = function(c) {
+  const cur = pendingCellRents[c]||0;
+  const val = prompt('設定「'+c+'」的每月租金：', cur);
+  if(val===null) return;
+  const num = parseInt(val);
+  if(isNaN(num)||num<0){ showToast('請輸入正確的租金金額'); return; }
+  pendingCellRents[c] = num;
+  renderCellsList();
+};
+window.removeCell = function(c) { pendingCells=pendingCells.filter(x=>x!==c); delete pendingCellRents[c]; renderCellsList(); };
 
 window.saveOwner = async function() {
   const editId = document.getElementById('editing-owner-id').value;
@@ -1437,9 +1492,11 @@ window.saveOwner = async function() {
   const feeRate = parseInt(document.getElementById('owner-fee').value);
   const settleDay = parseInt(document.getElementById('owner-settle-day').value);
   const barcodeTotal = parseInt(document.getElementById('owner-barcode-total')?.value||50);
+  const storageFee800 = parseInt(document.getElementById('owner-storage-800').value)||0;
+  const storageFee1000 = parseInt(document.getElementById('owner-storage-1000').value)||0;
   if(!name){showToast('請填寫格主名稱');return;}
 
-  const data = {name, feeRate, settleDay, barcodeTotal, cells:pendingCells};
+  const data = {name, feeRate, settleDay, barcodeTotal, cells:pendingCells, cellRents:pendingCellRents, storageFee800, storageFee1000};
   if(editId) {
     await updateDoc(doc(db,'owners',editId), data);
     showToast('✅ 格主已更新');
@@ -1587,7 +1644,10 @@ window.editOwner = async function(ownerId) {
   document.getElementById('owner-name').value = o.name||'';
   document.getElementById('owner-fee').value = o.feeRate||10;
   document.getElementById('owner-settle-day').value = o.settleDay||1;
+  document.getElementById('owner-storage-800').value = o.storageFee800||0;
+  document.getElementById('owner-storage-1000').value = o.storageFee1000||0;
   pendingCells = [...(o.cells||[])];
+  pendingCellRents = {...(o.cellRents||{})};
   renderCellsList();
   openModal('modal-new-owner');
 };
@@ -1616,6 +1676,9 @@ function renderOwnersList() {
 
   el.innerHTML = expiryWarning + owners.map(o=>{
     const cells = (o.cells||[]);
+    const cellRents = o.cellRents||{};
+    const rentTotal = cells.reduce((s,c)=>s+(cellRents[c]||0),0);
+    const storageFeeTotal = (o.storageFee800||0)*800 + (o.storageFee1000||0)*1000;
     const inactiveDate = o.inactiveAt ? (o.inactiveAt.toDate?o.inactiveAt.toDate():new Date(o.inactiveAt)).toLocaleDateString('zh-TW') : '';
     const btns = isInactiveTab
       ? `<button class="btn btn-success btn-sm" data-reactivate-oid="${o.id}">▶ 續租</button>`
@@ -1626,11 +1689,12 @@ function renderOwnersList() {
         <div>
           <div style="font-size:16px;font-weight:700;">${o.name}${isInactiveTab?' <span style="font-size:11px;color:var(--danger);">已退租</span>':''}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:4px;">手續費 ${o.feeRate}%・每月 ${o.settleDay} 號結帳${inactiveDate?' · 退租日：'+inactiveDate:''}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;">🏠 租金合計 $${rentTotal.toLocaleString()}${storageFeeTotal?'　📦 倉儲費 $'+storageFeeTotal.toLocaleString():''}</div>
         </div>
         <div style="display:flex;gap:6px;">${btns}</div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
-        ${cells.length?cells.map(c=>`<span class="cell-chip">${c}</span>`).join(''):'<span style="font-size:12px;color:var(--text3);">尚無格子</span>'}
+        ${cells.length?cells.map(c=>`<span class="cell-chip">${c} $${(cellRents[c]||0).toLocaleString()}</span>`).join(''):'<span style="font-size:12px;color:var(--text3);">尚無格子</span>'}
       </div>
     </div>`;
   }).join('');
@@ -3450,7 +3514,7 @@ window.downloadSettlementReport = async function(day, selYear, selMonth) {
   await loadScript('https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js');
   const wb=XLSX.utils.book_new();
   const targetProds=Object.values(allProducts).filter(p=>{
-    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
     const owner=getOwnerByCell(p.cellId);
@@ -3621,6 +3685,182 @@ function renderPrintRecords() {
   }).join('');
 }
 
+// ===== 老闆專區：格主撥款紀錄 =====
+let payoutBoardDay = 1;
+let payoutBoardTab = 'pending';
+
+function setupPayoutsListener() {
+  onSnapshot(collection(db,'payouts'), snap => {
+    allPayouts = [];
+    snap.forEach(d => allPayouts.push({id:d.id,...d.data()}));
+    if(document.getElementById('page-boss')?.classList.contains('active')) renderPayoutBoard();
+  });
+}
+
+window.switchPayoutDay = function(day, el) {
+  payoutBoardDay = day;
+  document.getElementById('payout-day-1')?.classList.toggle('active', day===1);
+  document.getElementById('payout-day-15')?.classList.toggle('active', day===15);
+  renderPayoutBoard();
+};
+window.switchPayoutTab = function(tab, el) {
+  payoutBoardTab = tab;
+  document.getElementById('payout-tab-pending')?.classList.toggle('active', tab==='pending');
+  document.getElementById('payout-tab-done')?.classList.toggle('active', tab==='done');
+  renderPayoutBoard();
+};
+
+function populatePayoutMonthSelectors() {
+  const now = new Date();
+  const yearSel = document.getElementById('payout-year');
+  const monthSel = document.getElementById('payout-month');
+  if(yearSel && !yearSel.options.length) {
+    for(let y=now.getFullYear();y>=now.getFullYear()-3;y--)
+      yearSel.innerHTML+=`<option value="${y}" ${y===now.getFullYear()?'selected':''}>${y}年</option>`;
+  }
+  if(monthSel && !monthSel.options.length) {
+    for(let m=1;m<=12;m++)
+      monthSel.innerHTML+=`<option value="${m}" ${m===now.getMonth()+1?'selected':''}>${m}月</option>`;
+  }
+}
+
+function getPayoutPeriod(day, selYear, selMonth) {
+  let periodStart, periodEnd, settleDateLabel, periodLabel;
+  if(day===1){
+    const py=selMonth===1?selYear-1:selYear, pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,1); periodEnd=new Date(selYear,selMonth-1,1);
+    const ld=new Date(selYear,selMonth-1,0).getDate();
+    settleDateLabel=`${selYear}/${selMonth}/1 結帳日`;
+    periodLabel=`${py}/${pm}/1 ～ ${py}/${pm}/${ld}`;
+  } else {
+    const py=selMonth===1?selYear-1:selYear, pm=selMonth===1?12:selMonth-1;
+    periodStart=new Date(py,pm-1,15); periodEnd=new Date(selYear,selMonth-1,15);
+    settleDateLabel=`${selYear}/${selMonth}/15 結帳日`;
+    periodLabel=`${py}/${pm}/15 ～ ${selYear}/${selMonth}/14`;
+  }
+  return {periodStart, periodEnd, settleDateLabel, periodLabel};
+}
+
+// 計算某結帳日、某格主本期尚未鎖定（未撥款）的可撥款毛額
+function calcOwnerGrossForPeriod(ownerId, periodStart, periodEnd) {
+  const owner = allOwners[ownerId]; if(!owner) return {grossAmount:0, hasPendingAny:false, prodIds:[]};
+  const fee = owner.feeRate/100;
+  let grossAmount=0, hasPendingAny=false; const prodIds=[];
+  Object.values(allProducts).forEach(p=>{
+    if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return;
+    const o=getOwnerByCell(p.cellId); if(!o||o.id!==ownerId) return;
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
+    if(ct<periodStart||ct>=periodEnd) return;
+    const boardTxs=allTxs.filter(tx=>tx.productId===p.id);
+    const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
+    const confirmedAmt=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    if(hasPending) hasPendingAny=true;
+    grossAmount += hasPending?0:Math.round(confirmedAmt*(1-fee));
+    prodIds.push(p.id);
+  });
+  return {grossAmount, hasPendingAny, prodIds};
+}
+
+function ownerRentAndStorage(owner) {
+  const cellRents = owner.cellRents||{};
+  const rentAmount = (owner.cells||[]).reduce((s,c)=>s+(cellRents[c]||0),0);
+  const storageFeeAmount = (owner.storageFee800||0)*800 + (owner.storageFee1000||0)*1000;
+  return {rentAmount, storageFeeAmount};
+}
+
+window.renderPayoutBoard = function() {
+  const el = document.getElementById('payout-board'); if(!el) return;
+  populatePayoutMonthSelectors();
+  const now = new Date();
+  const selYear = parseInt(document.getElementById('payout-year')?.value || now.getFullYear());
+  const selMonth = parseInt(document.getElementById('payout-month')?.value || (now.getMonth()+1));
+  const day = payoutBoardDay;
+  const {periodStart, periodEnd, settleDateLabel, periodLabel} = getPayoutPeriod(day, selYear, selMonth);
+
+  if(payoutBoardTab==='pending') {
+    const owners = Object.values(allOwners).filter(o=>!o.inactive && o.settleDay===day && (o.cells||[]).length);
+    el.innerHTML = `<div style="margin-bottom:10px;"><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div><div style="font-size:12px;color:var(--text2);">帳務期間：${periodLabel}</div></div>`;
+    if(owners.length===0) { el.innerHTML += '<div class="empty-state"><div class="icon">💤</div><p>此結帳日暫無格主</p></div>'; return; }
+    el.innerHTML += owners.map(owner=>{
+      const {grossAmount, hasPendingAny} = calcOwnerGrossForPeriod(owner.id, periodStart, periodEnd);
+      const {rentAmount, storageFeeAmount} = ownerRentAndStorage(owner);
+      const net = grossAmount - rentAmount - storageFeeAmount;
+      return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div>
+            <div style="font-weight:700;font-size:15px;">${owner.name}</div>
+            <div style="font-size:12px;color:var(--text2);">格子：${(owner.cells||[]).join('、')}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px;">刮板可撥款 $${grossAmount.toLocaleString()}　－　租金 $${rentAmount.toLocaleString()}${storageFeeAmount?'　－　倉儲費 $'+storageFeeAmount.toLocaleString():''}</div>
+            ${hasPendingAny?'<div style="font-size:11px;color:var(--warning);margin-top:2px;">部分刮板含待核帳，暫緩計入</div>':''}
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:20px;font-weight:700;color:${net>0?'var(--owner)':'var(--danger)'};">${net>=0?'$'+net.toLocaleString():'-$'+Math.abs(net).toLocaleString()}</div>
+            ${net>0
+              ? `<button class="btn btn-success btn-sm" style="margin-top:6px;" data-payout-owner="${owner.id}">✅ 已撥款</button>`
+              : `<div style="font-size:11px;color:var(--danger);margin-top:6px;">本期無可撥款金額</div>`}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('[data-payout-owner]').forEach(btn=>{
+      btn.addEventListener('click', ()=>markOwnerPaid(btn.dataset.payoutOwner, day, selYear, selMonth));
+    });
+  } else {
+    const list = allPayouts.filter(p=>p.settleDay===day && p.settleYear===selYear && p.settleMonth===selMonth)
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    el.innerHTML = `<div style="margin-bottom:10px;"><div style="font-size:14px;font-weight:700;">${settleDateLabel}</div></div>`;
+    if(list.length===0) { el.innerHTML += '<div class="empty-state"><div class="icon">📭</div><p>此結帳日尚無已完成撥款紀錄</p></div>'; return; }
+    el.innerHTML += list.map(p=>{
+      const dt = p.createdAt?.toDate?p.createdAt.toDate().toLocaleString('zh-TW'):'';
+      return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-weight:700;font-size:15px;">${p.ownerName}</div>
+            <div style="font-size:12px;color:var(--text2);">刮板毛額 $${(p.grossAmount||0).toLocaleString()}　－　租金 $${(p.rentAmount||0).toLocaleString()}${p.storageFeeAmount?'　－　倉儲費 $'+p.storageFeeAmount.toLocaleString():''}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;">${dt}・${p.createdByEmail||''}</div>
+          </div>
+          <div style="font-size:18px;font-weight:700;color:var(--owner);">$${(p.netAmount||0).toLocaleString()}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+};
+
+window.markOwnerPaid = async function(ownerId, day, selYear, selMonth) {
+  const owner = allOwners[ownerId]; if(!owner) return;
+  const {periodStart, periodEnd, settleDateLabel} = getPayoutPeriod(day, selYear, selMonth);
+  const {grossAmount, prodIds} = calcOwnerGrossForPeriod(ownerId, periodStart, periodEnd);
+  const {rentAmount, storageFeeAmount} = ownerRentAndStorage(owner);
+  const netAmount = grossAmount - rentAmount - storageFeeAmount;
+  if(netAmount<=0){ showToast('本期無可撥款金額'); return; }
+  if(!confirm(`確定要標記「${owner.name}」${settleDateLabel}已撥款 $${netAmount.toLocaleString()}？\n租金＋倉儲費 $${(rentAmount+storageFeeAmount).toLocaleString()} 將自動記入今日收入，相關刮板將鎖定不再重複計算。`)) return;
+
+  const payoutRef = await addDoc(collection(db,'payouts'), {
+    ownerId, ownerName: owner.name,
+    settleYear:selYear, settleMonth:selMonth, settleDay:day,
+    grossAmount, rentAmount, storageFeeAmount, netAmount,
+    productIds: prodIds,
+    createdAt: serverTimestamp(), createdBy: currentUser.uid, createdByEmail: currentUser.email
+  });
+  // 鎖定相關刮板批次，避免報表/待撥款重複計算
+  await Promise.all(prodIds.map(pid=>updateDoc(doc(db,'products',pid),{payoutId:payoutRef.id})));
+  // 租金＋倉儲費自動記為今日收入
+  const deduction = rentAmount+storageFeeAmount;
+  if(deduction>0) {
+    await addDoc(collection(db,'transactions'),{
+      productId:null, productName:'格主撥款扣款',
+      productType:'store', cellId:null, ownerId,
+      qty:1, amount:deduction, paymentMethod:'cash', paymentStatus:'confirmed',
+      note:`${owner.name} ${settleDateLabel} 撥款扣款：租金$${rentAmount.toLocaleString()}${storageFeeAmount?'＋倉儲費$'+storageFeeAmount.toLocaleString():''}`,
+      batchCompleted:true, finalAmount:deduction,
+      createdAt:serverTimestamp(), createdBy:currentUser.uid,
+      createdByEmail:currentUser.email, isPayoutDeduction:true, payoutId:payoutRef.id
+    });
+  }
+  showToast('✅ 已標記撥款完成');
+  renderPayoutBoard();
+};
+
 // ===== 結帳日總覽 =====
 let currentSettleDay = 1;
 
@@ -3675,7 +3915,7 @@ window.renderSettlementBoard = function() {
     periodLabel=`${py}/${pm}/15 ～ ${selYear}/${selMonth}/14`;
   }
   const targetProds=Object.values(allProducts).filter(p=>{
-    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
     const owner=getOwnerByCell(p.cellId);
