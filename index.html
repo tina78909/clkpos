@@ -212,10 +212,13 @@ select option{background:var(--surface2);}
       <div class="toggle-group">
         <button class="toggle-btn active" id="dash-btn-today" onclick="switchDashboard('today',this)">今日</button>
         <button class="toggle-btn" id="dash-btn-pick" onclick="switchDashboard('pick',this)">📅 選日期</button>
-        <button class="toggle-btn" id="dash-btn-month" onclick="switchDashboard('month',this)">本月</button>
+        <button class="toggle-btn" id="dash-btn-month" onclick="switchDashboard('month',this)">📆 月報表</button>
       </div>
       <div id="dash-date-picker" class="hidden" style="margin-bottom:12px;">
         <input type="date" id="dash-date-input" style="width:100%;" onchange="switchToPick()">
+      </div>
+      <div id="dash-month-picker" class="hidden" style="margin-bottom:12px;">
+        <input type="month" id="dash-month-input" style="width:100%;" onchange="renderDashboard()">
       </div>
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">總營業額</div><div class="stat-value blue" id="stat-total">$0</div></div>
@@ -1233,6 +1236,7 @@ window.switchToPick = function() {
   document.querySelectorAll('.toggle-group .toggle-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('dash-btn-pick')?.classList.add('active');
   document.getElementById('dash-date-picker')?.classList.remove('hidden');
+  document.getElementById('dash-month-picker')?.classList.add('hidden');
   renderDashboard();
 };
 
@@ -1240,16 +1244,16 @@ window.switchDashboard = function(mode, el) {
   dashboardMode = mode;
   document.querySelectorAll('.toggle-group .toggle-btn').forEach(b => b.classList.remove('active'));
   el.classList.add('active');
-  const picker = document.getElementById('dash-date-picker');
-  if(mode==='pick') {
-    picker.classList.remove('hidden');
-    // 預設今天
-    if(!document.getElementById('dash-date-input').value) {
-      const today = new Date();
-      document.getElementById('dash-date-input').value = today.toISOString().split('T')[0];
-    }
-  } else {
-    picker.classList.add('hidden');
+  const datePicker = document.getElementById('dash-date-picker');
+  const monthPicker = document.getElementById('dash-month-picker');
+  datePicker.classList.toggle('hidden', mode!=='pick');
+  monthPicker.classList.toggle('hidden', mode!=='month');
+  if(mode==='pick' && !document.getElementById('dash-date-input').value) {
+    document.getElementById('dash-date-input').value = new Date().toISOString().split('T')[0];
+  }
+  if(mode==='month' && !document.getElementById('dash-month-input').value) {
+    const now = new Date();
+    document.getElementById('dash-month-input').value = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   }
   renderDashboard();
 };
@@ -1276,6 +1280,16 @@ function getDashboardPeriod() {
   } else if(dashboardMode==='today') {
     startDate = new Date(now.getFullYear(),now.getMonth(),now.getDate());
     endDate   = new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);
+  } else if(dashboardMode==='month') {
+    const val = document.getElementById('dash-month-input')?.value; // "YYYY-MM"
+    if(val) {
+      const [y,m] = val.split('-').map(Number);
+      startDate = new Date(y, m-1, 1);
+      endDate   = new Date(y, m, 1);
+    } else {
+      startDate = new Date(now.getFullYear(),now.getMonth(),1);
+      endDate   = new Date(now.getFullYear(),now.getMonth()+1,1);
+    }
   } else {
     startDate = new Date(now.getFullYear(),now.getMonth(),1);
     endDate   = new Date(now.getFullYear(),now.getMonth()+1,1);
@@ -1340,9 +1354,12 @@ async function renderDashboard() {
 }
 
 // ===== 店內收益明細 =====
+let revenueDetailData = null;
+let revenueExpandedIncomeCat = null; // 'storeItem' | 'fee' | null
+let revenueExpandedExpenseCat = null; // category key | null
+
 window.openStoreRevenueDetail = function() {
   const {startDate, endDate} = getDashboardPeriod();
-  const catName = {staff:'工讀生費用',salary:'工讀生費用',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
 
   // 收入明細：店內商品全額 + 格主刮板手續費分成
   const confirmed = allTxs.filter(tx=>{
@@ -1371,53 +1388,122 @@ window.openStoreRevenueDetail = function() {
   });
   feeItems.sort((a,b)=>b.ct-a.ct);
 
-  const storeItemTotal = storeItemTxs.reduce((s,tx)=>s+(tx.amount||0),0);
-  const feeTotal = feeItems.reduce((s,f)=>s+f.feeAmount,0);
-  const incomeTotal = storeItemTotal + feeTotal;
-
-  // 支出明細（排除「格主費用」，因為該分類本來就沒被算進店內收益）
+  // 支出明細：全部分類都列出（含「格主費用」），但「格主費用」不影響店內收益淨額
   const periodExpenses = allExpenses.filter(e=>{
     const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
-    return dt>=startDate && dt<endDate && e.category!=='ownerFee';
+    return dt>=startDate && dt<endDate;
   }).sort((a,b)=>{
     const toStr=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
     return toStr(b.expenseDate).localeCompare(toStr(a.expenseDate));
   });
-  const expenseTotal = periodExpenses.reduce((s,e)=>s+(e.amount||0),0);
 
-  const netTotal = Math.round(incomeTotal) - expenseTotal;
+  const periodLabel = dashboardMode==='month'
+    ? (document.getElementById('dash-month-input')?.value||'本月')
+    : (dashboardMode==='today' ? '今日' : document.getElementById('dash-date-input')?.value||'選定日期');
 
-  const periodLabel = dashboardMode==='month' ? '本月' : (dashboardMode==='today' ? '今日' : document.getElementById('dash-date-input')?.value||'選定日期');
+  revenueDetailData = {storeItemTxs, feeItems, periodExpenses, periodLabel};
+  revenueExpandedIncomeCat = null;
+  revenueExpandedExpenseCat = null;
+  renderStoreRevenueDetailBody();
+  openModal('modal-store-revenue-detail');
+};
+
+window.toggleRevenueIncomeCat = function(cat) {
+  revenueExpandedIncomeCat = (revenueExpandedIncomeCat===cat) ? null : cat;
+  renderStoreRevenueDetailBody();
+};
+window.toggleRevenueExpenseCat = function(cat) {
+  revenueExpandedExpenseCat = (revenueExpandedExpenseCat===cat) ? null : cat;
+  renderStoreRevenueDetailBody();
+};
+
+function renderStoreRevenueDetailBody() {
+  if(!revenueDetailData) return;
+  const {storeItemTxs, feeItems, periodExpenses, periodLabel} = revenueDetailData;
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+  const catOrder = ['salary','meal','ownerFee','shipping','purchase','rent','other'];
+
+  const storeItemTotal = storeItemTxs.reduce((s,tx)=>s+(tx.amount||0),0);
+  const feeTotal = feeItems.reduce((s,f)=>s+f.feeAmount,0);
+  const incomeTotal = storeItemTotal + feeTotal;
+
+  const expGroups = {};
+  periodExpenses.forEach(e=>{
+    const key = e.category==='staff' ? 'salary' : (e.category||'other');
+    (expGroups[key]=expGroups[key]||[]).push(e);
+  });
+  const usedExpCats = catOrder.filter(c=>expGroups[c]);
+  Object.keys(expGroups).forEach(k=>{ if(!catOrder.includes(k)) usedExpCats.push(k); });
+  // 「格主費用」本來就沒被算進店內收益，這裡只顯示、不列入扣除
+  const expenseTotalExclOwnerFee = periodExpenses.filter(e=>e.category!=='ownerFee').reduce((s,e)=>s+(e.amount||0),0);
+  const expenseTotalAll = periodExpenses.reduce((s,e)=>s+(e.amount||0),0);
+
+  const netTotal = Math.round(incomeTotal) - expenseTotalExclOwnerFee;
+
   document.getElementById('store-revenue-period').textContent = `統計區間：${periodLabel}`;
-
   const body = document.getElementById('store-revenue-detail-body');
-  const rowHtml = (title, sub, amount, positive=true) => `
-    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
-      <div><div style="font-size:13px;">${title}</div>${sub?`<div style="font-size:11px;color:var(--text3);">${sub}</div>`:''}</div>
-      <div style="font-weight:700;color:${positive?'var(--owner)':'var(--danger)'};">${positive?'+':'-'}$${Math.round(amount).toLocaleString()}</div>
+
+  const catRow = (key, label, amount, count, isOpen, toggleFn, note) => `
+    <div style="border-bottom:1px solid var(--border);">
+      <div class="flex-between" style="padding:10px 4px;cursor:pointer;" onclick="${toggleFn}('${key}')">
+        <span style="display:flex;align-items:center;gap:6px;">
+          <span style="display:inline-block;font-size:11px;transition:transform .15s;transform:rotate(${isOpen?90:0}deg);">▸</span>
+          ${label}<span style="color:var(--text3);font-size:11px;">（${count}筆）</span>${note||''}
+        </span>
+        <span style="font-weight:700;">$${Math.round(amount).toLocaleString()}</span>
+      </div>
     </div>`;
 
-  let html = `<div style="font-weight:700;margin:10px 0 6px;">🟢 收入明細（合計 $${Math.round(incomeTotal).toLocaleString()}）</div>`;
+  let html = `<div style="font-weight:700;margin:10px 0 4px;">🟢 收入明細（合計 $${Math.round(incomeTotal).toLocaleString()}）</div>`;
   if(storeItemTxs.length===0 && feeItems.length===0) {
     html += '<div class="empty-state" style="padding:12px;"><p>此區間尚無收入</p></div>';
   } else {
-    html += storeItemTxs.map(tx=>{
-      const dt = tx.createdAt.toDate().toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-      return rowHtml(tx.productName||'店內商品', `${dt}　${tx.paymentMethod==='transfer'?'🏦轉帳':'💵現金'}${tx.note?'　📝'+tx.note:''}`, tx.amount||0);
-    }).join('');
-    html += feeItems.map(({prod,owner,feeAmount,ct})=>{
-      const dt = ct.toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-      return rowHtml(`${owner?owner.name:'未知格主'} 手續費分成`, `${dt}　格子 ${prod.cellId||'-'}　費率 ${owner?owner.feeRate:10}%`, feeAmount);
-    }).join('');
+    if(storeItemTxs.length) {
+      html += catRow('storeItem','店內商品收入', storeItemTotal, storeItemTxs.length, revenueExpandedIncomeCat==='storeItem', 'toggleRevenueIncomeCat');
+      if(revenueExpandedIncomeCat==='storeItem') {
+        html += '<div style="padding:0 0 8px 18px;">' + storeItemTxs.map(tx=>{
+          const dt = tx.createdAt.toDate().toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+          return `<div class="tx-item" style="padding:8px 12px;margin-bottom:6px;">
+              <div class="tx-header"><span style="font-size:13px;">${tx.productName||'店內商品'}</span><span style="font-weight:700;color:var(--owner);">+$${(tx.amount||0).toLocaleString()}</span></div>
+              <div class="tx-meta"><span>${dt}</span><span>${tx.paymentMethod==='transfer'?'🏦轉帳':'💵現金'}</span>${tx.note?`<span>📝 ${tx.note}</span>`:''}</div>
+            </div>`;
+        }).join('') + '</div>';
+      }
+    }
+    if(feeItems.length) {
+      html += catRow('fee','格主刮板手續費分成', feeTotal, feeItems.length, revenueExpandedIncomeCat==='fee', 'toggleRevenueIncomeCat');
+      if(revenueExpandedIncomeCat==='fee') {
+        html += '<div style="padding:0 0 8px 18px;">' + feeItems.map(({prod,owner,feeAmount,ct})=>{
+          const dt = ct.toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+          return `<div class="tx-item" style="padding:8px 12px;margin-bottom:6px;">
+              <div class="tx-header"><span style="font-size:13px;">${owner?owner.name:'未知格主'}</span><span style="font-weight:700;color:var(--owner);">+$${Math.round(feeAmount).toLocaleString()}</span></div>
+              <div class="tx-meta"><span>${dt}</span><span>格子 ${prod.cellId||'-'}</span><span>費率 ${owner?owner.feeRate:10}%</span></div>
+            </div>`;
+        }).join('') + '</div>';
+      }
+    }
   }
 
-  html += `<div style="font-weight:700;margin:16px 0 6px;">🔴 支出明細（合計 $${expenseTotal.toLocaleString()}）</div>`;
+  html += `<div style="font-weight:700;margin:16px 0 4px;">🔴 支出明細（合計 $${expenseTotalAll.toLocaleString()}）</div>`;
   if(periodExpenses.length===0) {
     html += '<div class="empty-state" style="padding:12px;"><p>此區間尚無支出</p></div>';
   } else {
-    html += periodExpenses.map(e=>{
-      const dt = typeof e.expenseDate==='string'?e.expenseDate:(e.expenseDate?.toDate?e.expenseDate.toDate().toLocaleDateString('zh-TW'):'');
-      return rowHtml(`${catName[e.category]||e.category||'其他'}　${e.item||''}`, `${dt}${e.note?'　📝'+e.note:''}`, e.amount||0, false);
+    html += usedExpCats.map(c=>{
+      const items = expGroups[c];
+      const catTotal = items.reduce((s,e)=>s+(e.amount||0),0);
+      const isOpen = revenueExpandedExpenseCat===c;
+      const note = c==='ownerFee' ? '<span style="color:var(--text3);font-size:11px;">（不列入店內收益扣除）</span>' : '';
+      let rowsHtml = catRow(c, catName[c]||c, catTotal, items.length, isOpen, 'toggleRevenueExpenseCat', note);
+      if(isOpen) {
+        rowsHtml += '<div style="padding:0 0 8px 18px;">' + items.map(e=>{
+          const dt = typeof e.expenseDate==='string'?e.expenseDate:(e.expenseDate?.toDate?e.expenseDate.toDate().toLocaleDateString('zh-TW'):'');
+          return `<div class="tx-item" style="padding:8px 12px;margin-bottom:6px;">
+              <div class="tx-header"><span style="font-size:13px;">${e.item||''}</span><span style="font-weight:700;color:var(--danger);">-$${(e.amount||0).toLocaleString()}</span></div>
+              <div class="tx-meta"><span>${dt}</span>${e.note?`<span>📝 ${e.note}</span>`:''}</div>
+            </div>`;
+        }).join('') + '</div>';
+      }
+      return rowsHtml;
     }).join('');
   }
 
@@ -1427,8 +1513,7 @@ window.openStoreRevenueDetail = function() {
     </div>`;
 
   body.innerHTML = html;
-  openModal('modal-store-revenue-detail');
-};
+}
 
 function populateDateFilter() {
   const sel = document.getElementById('tx-date-filter');
