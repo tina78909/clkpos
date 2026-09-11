@@ -218,7 +218,7 @@ select option{background:var(--surface2);}
         <input type="date" id="dash-date-input" style="width:100%;" onchange="switchToPick()">
       </div>
       <div id="dash-month-picker" class="hidden" style="margin-bottom:12px;">
-        <input type="month" id="dash-month-input" style="width:100%;" onchange="renderDashboard()">
+        <input type="month" id="dash-month-input" style="width:100%;" onchange="onDashMonthChange()">
       </div>
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">總營業額</div><div class="stat-value blue" id="stat-total">$0</div></div>
@@ -1231,6 +1231,10 @@ window.switchPage = function(page, el) {
   if(page==='print') initPrintPage();
   if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); renderExpenseSummary(); }
 };
+window.onDashMonthChange = function() {
+  renderDashboard();
+};
+
 window.switchToPick = function() {
   dashboardMode = 'pick';
   document.querySelectorAll('.toggle-group .toggle-btn').forEach(b=>b.classList.remove('active'));
