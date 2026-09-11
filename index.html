@@ -219,17 +219,11 @@ select option{background:var(--surface2);}
       </div>
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">總營業額</div><div class="stat-value blue" id="stat-total">$0</div></div>
-        <div class="stat-card"><div class="stat-label">店內收益</div><div class="stat-value green" id="stat-store">$0</div></div>
+        <div class="stat-card" style="cursor:pointer;" onclick="openStoreRevenueDetail()"><div class="stat-label">店內收益 <span style="font-size:10px;color:var(--text3);">點選查看明細 ›</span></div><div class="stat-value green" id="stat-store">$0</div></div>
         <div class="stat-card"><div class="stat-label">待核帳</div><div class="stat-value red" id="stat-pending">$0</div></div>
         <div class="stat-card"><div class="stat-label">交易筆數</div><div class="stat-value yellow" id="stat-count">0</div></div>
       </div>
       <div id="pending-alert" class="hidden"><div class="alert alert-warning">⚠️ 有 <strong id="pending-count">0</strong> 筆轉帳待老闆核帳</div></div>
-
-
-      <div class="card">
-        <div class="card-header"><div class="card-title">💰 格主應撥款（本月已結算）</div></div>
-        <div id="owner-payout-list"><div class="empty-state"><div class="icon">💤</div><p>本月尚無已結算項目</p></div></div>
-      </div>
 
       <!-- 近期交易 + 日期篩選 -->
       <div class="card">
@@ -682,6 +676,21 @@ select option{background:var(--surface2);}
 <!-- ===== MODALS ===== -->
 
 <!-- NEW OWNER -->
+<!-- STORE REVENUE DETAIL -->
+<div class="modal-overlay" id="modal-store-revenue-detail">
+  <div class="modal" style="max-width:680px;">
+    <div class="modal-header">
+      <div class="modal-title">📊 店內收益明細</div>
+      <button class="modal-close" onclick="closeModal('modal-store-revenue-detail')">✕</button>
+    </div>
+    <div id="store-revenue-period" style="font-size:12px;color:var(--text2);margin-bottom:12px;"></div>
+    <div id="store-revenue-detail-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-store-revenue-detail')">關閉</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-new-owner">
   <div class="modal">
     <div class="modal-header"><div class="modal-title" id="owner-modal-title">🏪 新增格主</div><button class="modal-close" onclick="closeModal('modal-new-owner')">✕</button></div>
@@ -1251,7 +1260,7 @@ window.switchRegisterTab = function(tab, el) {
 };
 
 // ===== DASHBOARD =====
-async function renderDashboard() {
+function getDashboardPeriod() {
   const now = new Date();
   let startDate, endDate;
   if(dashboardMode==='pick') {
@@ -1271,6 +1280,11 @@ async function renderDashboard() {
     startDate = new Date(now.getFullYear(),now.getMonth(),1);
     endDate   = new Date(now.getFullYear(),now.getMonth()+1,1);
   }
+  return {startDate, endDate};
+}
+
+async function renderDashboard() {
+  const {startDate, endDate} = getDashboardPeriod();
 
   const filtered = allTxs.filter(tx => {
     if(!tx.createdAt) return false;
@@ -1304,10 +1318,10 @@ async function renderDashboard() {
   });
   const pendingTotal = pending.reduce((s,tx) => s+(tx.amount||0),0);
 
-  // 計算本期支出
+  // 計算本期支出（「格主費用」是撥給格主的錢，本來就沒被算進店內收益，這裡要排除，不然會重複扣）
   const periodExpenses = allExpenses.filter(e=>{
     const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
-    return dt >= startDate && dt < endDate;
+    return dt >= startDate && dt < endDate && e.category!=='ownerFee';
   });
   const totalExpense = periodExpenses.reduce((s,e)=>s+(e.amount||0), 0);
   const netRevenue = Math.round(storeRevenue) - totalExpense;
@@ -1321,40 +1335,100 @@ async function renderDashboard() {
   document.getElementById('pending-alert').classList.toggle('hidden', allPending.length===0);
   document.getElementById('pending-count').textContent = allPending.length;
 
-  renderOwnerPayouts(allTxs.filter(tx=>tx.paymentStatus==='confirmed'));
   populateDateFilter();
   renderRecentTx();
 }
 
-function renderOwnerPayouts(confirmedTxs) {
-  const payouts = {};
-  // 找本月已完刮刮板，且「無任何待核帳」才列入撥款
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const completedProds = Object.values(allProducts).filter(p => {
-    if(!p.completedAt||p.deleted||p.payoutId) return false;
-    const ct = p.completedAt.toDate ? p.completedAt.toDate() : new Date(p.completedAt);
-    return ct >= monthStart && (p.status==='completed'||p.status==='scrapped') && p.type==='owner';
+// ===== 店內收益明細 =====
+window.openStoreRevenueDetail = function() {
+  const {startDate, endDate} = getDashboardPeriod();
+  const catName = {staff:'工讀生費用',salary:'工讀生費用',meal:'餐費',ownerFee:'格主費用',shipping:'運費',purchase:'進貨',rent:'店租水電',other:'其他'};
+
+  // 收入明細：店內商品全額 + 格主刮板手續費分成
+  const confirmed = allTxs.filter(tx=>{
+    if(!tx.createdAt||tx.paymentStatus!=='confirmed') return false;
+    const d = tx.createdAt.toDate();
+    return d>=startDate && d<endDate;
   });
-  completedProds.forEach(prod => {
+  const storeItemTxs = confirmed.filter(tx=>tx.productType==='store')
+    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+
+  const feeItems = [];
+  const settledProdsSet = new Set();
+  Object.values(allProducts).filter(p=>{
+    if(!p.completedAt||p.deleted) return false;
+    const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt));
+    return ct>=startDate && ct<endDate && (p.status==='completed'||p.status==='scrapped') && p.type==='owner';
+  }).forEach(prod=>{
+    if(settledProdsSet.has(prod.id)) return;
     const boardTxs = allTxs.filter(tx=>tx.productId===prod.id);
-    const hasPending = boardTxs.some(tx=>tx.paymentStatus==='pending');
-    if(hasPending) return; // 有待核帳 → 整張暫緩
-    const confirmedTotal = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const owner = getOwnerByCell(prod.cellId); if(!owner) return;
-    if(!payouts[owner.id]) payouts[owner.id]={owner, total:0};
-    const fee = owner.feeRate/100;
-    payouts[owner.id].total += confirmedTotal*(1-fee);
+    if(boardTxs.some(tx=>tx.paymentStatus==='pending')) return; // 有待核帳暫緩
+    settledProdsSet.add(prod.id);
+    const total = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
+    const owner = getOwnerByCell(prod.cellId);
+    const fee   = owner ? owner.feeRate/100 : 0.1;
+    feeItems.push({prod, owner, feeAmount: total*fee, ct: getLastTxDate(prod.id)||(prod.completedAt?.toDate?prod.completedAt.toDate():new Date(prod.completedAt))});
   });
-  const el = document.getElementById('owner-payout-list');
-  const entries = Object.values(payouts);
-  if(entries.length===0){el.innerHTML='<div class="empty-state"><div class="icon">💤</div><p>本月尚無已結算項目</p></div>';return;}
-  el.innerHTML = entries.map(({owner,total})=>`
-    <div class="flex-between" style="padding:10px 0;border-bottom:1px solid var(--border);">
-      <div><div style="font-weight:600;">${owner.name}</div><div style="font-size:12px;color:var(--text2);">費率 ${owner.feeRate}%・${owner.settleDay}號結帳・格子：${(owner.cells||[]).join('、')}</div></div>
-      <div style="font-size:18px;font-weight:700;color:var(--owner);">$${Math.round(total).toLocaleString()}</div>
-    </div>`).join('');
-}
+  feeItems.sort((a,b)=>b.ct-a.ct);
+
+  const storeItemTotal = storeItemTxs.reduce((s,tx)=>s+(tx.amount||0),0);
+  const feeTotal = feeItems.reduce((s,f)=>s+f.feeAmount,0);
+  const incomeTotal = storeItemTotal + feeTotal;
+
+  // 支出明細（排除「格主費用」，因為該分類本來就沒被算進店內收益）
+  const periodExpenses = allExpenses.filter(e=>{
+    const dt = e.expenseDate?.toDate ? e.expenseDate.toDate() : new Date(e.expenseDate);
+    return dt>=startDate && dt<endDate && e.category!=='ownerFee';
+  }).sort((a,b)=>{
+    const toStr=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
+    return toStr(b.expenseDate).localeCompare(toStr(a.expenseDate));
+  });
+  const expenseTotal = periodExpenses.reduce((s,e)=>s+(e.amount||0),0);
+
+  const netTotal = Math.round(incomeTotal) - expenseTotal;
+
+  const periodLabel = dashboardMode==='month' ? '本月' : (dashboardMode==='today' ? '今日' : document.getElementById('dash-date-input')?.value||'選定日期');
+  document.getElementById('store-revenue-period').textContent = `統計區間：${periodLabel}`;
+
+  const body = document.getElementById('store-revenue-detail-body');
+  const rowHtml = (title, sub, amount, positive=true) => `
+    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+      <div><div style="font-size:13px;">${title}</div>${sub?`<div style="font-size:11px;color:var(--text3);">${sub}</div>`:''}</div>
+      <div style="font-weight:700;color:${positive?'var(--owner)':'var(--danger)'};">${positive?'+':'-'}$${Math.round(amount).toLocaleString()}</div>
+    </div>`;
+
+  let html = `<div style="font-weight:700;margin:10px 0 6px;">🟢 收入明細（合計 $${Math.round(incomeTotal).toLocaleString()}）</div>`;
+  if(storeItemTxs.length===0 && feeItems.length===0) {
+    html += '<div class="empty-state" style="padding:12px;"><p>此區間尚無收入</p></div>';
+  } else {
+    html += storeItemTxs.map(tx=>{
+      const dt = tx.createdAt.toDate().toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return rowHtml(tx.productName||'店內商品', `${dt}　${tx.paymentMethod==='transfer'?'🏦轉帳':'💵現金'}${tx.note?'　📝'+tx.note:''}`, tx.amount||0);
+    }).join('');
+    html += feeItems.map(({prod,owner,feeAmount,ct})=>{
+      const dt = ct.toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return rowHtml(`${owner?owner.name:'未知格主'} 手續費分成`, `${dt}　格子 ${prod.cellId||'-'}　費率 ${owner?owner.feeRate:10}%`, feeAmount);
+    }).join('');
+  }
+
+  html += `<div style="font-weight:700;margin:16px 0 6px;">🔴 支出明細（合計 $${expenseTotal.toLocaleString()}）</div>`;
+  if(periodExpenses.length===0) {
+    html += '<div class="empty-state" style="padding:12px;"><p>此區間尚無支出</p></div>';
+  } else {
+    html += periodExpenses.map(e=>{
+      const dt = typeof e.expenseDate==='string'?e.expenseDate:(e.expenseDate?.toDate?e.expenseDate.toDate().toLocaleDateString('zh-TW'):'');
+      return rowHtml(`${catName[e.category]||e.category||'其他'}　${e.item||''}`, `${dt}${e.note?'　📝'+e.note:''}`, e.amount||0, false);
+    }).join('');
+  }
+
+  html += `<div class="flex-between" style="padding:14px 0 4px;margin-top:8px;border-top:2px solid var(--border);">
+      <span style="font-weight:700;font-size:15px;">店內收益淨額</span>
+      <span style="font-weight:700;font-size:20px;color:var(--owner);">$${netTotal.toLocaleString()}</span>
+    </div>`;
+
+  body.innerHTML = html;
+  openModal('modal-store-revenue-detail');
+};
 
 function populateDateFilter() {
   const sel = document.getElementById('tx-date-filter');
@@ -3022,14 +3096,16 @@ window.downloadReport = async function() {
   const toD=x=>typeof x==='string'?x:(x?.toDate?x.toDate().toISOString().slice(0,10):'');
   const monthExpenses=allExpenses.filter(e=>toD(e.expenseDate).startsWith(monthStr));
   const totalExp=monthExpenses.reduce((s,e)=>s+(e.amount||0),0);
+  // 「格主費用」是撥給格主的錢，本來就沒被算進店內收益，算店內淨收益時要排除，不然會重複扣
+  const totalExpExclOwnerFee=monthExpenses.filter(e=>e.category!=='ownerFee').reduce((s,e)=>s+(e.amount||0),0);
 
   const ws1=XLSX.utils.aoa_to_sheet([
     ['CLK Toys POS 月報表', monthStr],[],
     ['總營業額（已確認）', totalRev],
     ['格主應撥款（已扣除）', ownerPayoutTotal],
     ['店內收益（總營業額-格主可得）', Math.round(storeRev)],
-    ['支出合計', totalExp],
-    ['店內淨收益（店內收益-支出）', Math.round(storeRev)-totalExp],
+    ['支出合計（含格主費用）', totalExp],
+    ['店內淨收益（店內收益-支出，不含格主費用）', Math.round(storeRev)-totalExpExclOwnerFee],
   ]);
   XLSX.utils.book_append_sheet(wb, ws1, '月份總覽');
 
@@ -3855,6 +3931,17 @@ window.markOwnerPaid = async function(ownerId, day, selYear, selMonth) {
       batchCompleted:true, finalAmount:deduction,
       createdAt:serverTimestamp(), createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isPayoutDeduction:true, payoutId:payoutRef.id
+    });
+  }
+  // 格主實拿淨額記為一筆「格主費用」支出，方便查核金流；此分類在算店內損益時會被排除，不影響店內收益
+  if(netAmount>0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    await addDoc(collection(db,'expenses'),{
+      amount: netAmount, category:'ownerFee', item:`${owner.name} ${settleDateLabel} 撥款`,
+      note:`格主撥款：刮板毛額$${grossAmount.toLocaleString()} － 租金$${rentAmount.toLocaleString()}${storageFeeAmount?'－倉儲費$'+storageFeeAmount.toLocaleString():''}`,
+      expenseDate: todayStr,
+      createdAt: serverTimestamp(), createdBy: currentUser.uid, createdByEmail: currentUser.email,
+      isPayoutExpense:true, payoutId: payoutRef.id
     });
   }
   showToast('✅ 已標記撥款完成');
