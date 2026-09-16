@@ -228,12 +228,24 @@ select option{background:var(--surface2);}
       </div>
       <div id="pending-alert" class="hidden"><div class="alert alert-warning">⚠️ 有 <strong id="pending-count">0</strong> 筆轉帳待老闆核帳</div></div>
 
-      <!-- 近期交易 + 日期篩選 -->
+      <!-- 近期交易 + 分類/日期篩選 -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">🧾 近期交易</div>
-          <select id="tx-date-filter" style="font-size:13px;padding:6px 10px;width:auto;" onchange="renderRecentTx()">
-            <option value="">全部</option>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <select id="tx-category-filter" style="font-size:13px;padding:6px 10px;flex:1;min-width:130px;" onchange="renderRecentTx()">
+            <option value="">全部分類</option>
+            <option value="store_normal">店內刮板（一般登帳）</option>
+            <option value="owner_normal">格主刮板（一般登帳）</option>
+            <option value="lightning_store_scratch">閃電登帳：店內刮板</option>
+            <option value="lightning_store_item">閃電登帳：店內商品</option>
+            <option value="lightning_rent">閃電登帳：格子租金</option>
+            <option value="lightning_owner">閃電登帳：格主刮板</option>
+            <option value="payout_deduction">格主撥款扣款</option>
+          </select>
+          <select id="tx-date-filter" style="font-size:13px;padding:6px 10px;flex:1;min-width:130px;" onchange="renderRecentTx()">
+            <option value="">全部日期</option>
           </select>
         </div>
         <div id="recent-tx-list"><div class="empty-state"><div class="icon">💤</div><p>尚無交易紀錄</p></div></div>
@@ -1528,9 +1540,26 @@ function populateDateFilter() {
   sel.innerHTML = '<option value="">全部日期</option>' + sorted.map(d=>`<option value="${d}" ${d===cur?'selected':''}>${d}</option>`).join('');
 }
 
+// 依「登帳分類」判斷交易屬於哪一類，供近期交易篩選使用
+function getTxCategory(tx) {
+  if(tx.isPayoutDeduction) return 'payout_deduction';
+  if(tx.isLightning) {
+    if(tx.lightningType==='store_scratch') return 'lightning_store_scratch';
+    if(tx.lightningType==='store_item') return 'lightning_store_item';
+    if(tx.lightningType==='rent') return 'lightning_rent';
+    if(tx.lightningType==='owner') return 'lightning_owner';
+    return 'lightning_owner';
+  }
+  return tx.productType==='store' ? 'store_normal' : 'owner_normal';
+}
+
 window.renderRecentTx = function() {
   const dateFilter = document.getElementById('tx-date-filter')?.value || '';
+  const categoryFilter = document.getElementById('tx-category-filter')?.value || '';
   let txs = [...allTxs];
+  if(categoryFilter) {
+    txs = txs.filter(tx => getTxCategory(tx)===categoryFilter);
+  }
   if(dateFilter) {
     txs = txs.filter(tx => {
       if(!tx.createdAt) return false;
@@ -1538,7 +1567,7 @@ window.renderRecentTx = function() {
       const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       return ds===dateFilter;
     });
-  } else { txs = txs.slice(0,30); }
+  } else if(!categoryFilter) { txs = txs.slice(0,30); }
 
   const el = document.getElementById('recent-tx-list');
   if(txs.length===0){el.innerHTML='<div class="empty-state"><div class="icon">💤</div><p>無交易紀錄</p></div>';return;}
