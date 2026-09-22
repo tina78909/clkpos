@@ -629,6 +629,12 @@ select option{background:var(--surface2);}
 
     <div id="page-boss" class="page">
       <div class="section-title">👑 老闆專區 <span class="sub">待核帳管理</span></div>
+
+      <div id="rent-reminder-card" class="hidden card" style="border:1px solid var(--danger);">
+        <div class="card-header"><div class="card-title">⚠️ 租金催繳提醒</div></div>
+        <div id="rent-reminder-list"></div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <div class="card-title">🏦 轉帳核帳看板</div>
@@ -831,6 +837,17 @@ select option{background:var(--surface2);}
       <label class="field-label">付款方式</label>
       <select id="edit-tx-payment"><option value="cash">現金</option><option value="transfer">轉帳</option></select>
     </div>
+    <div class="field-group" id="edit-tx-ownership-group">
+      <label class="field-label">歸屬</label>
+      <div class="form-row">
+        <select id="edit-tx-type" onchange="onEditTxTypeChange()">
+          <option value="store">🎴 店內</option>
+          <option value="owner">🏪 格主</option>
+        </select>
+        <select id="edit-tx-cell-id"></select>
+      </div>
+    </div>
+    <div id="edit-tx-ownership-locked" class="hidden" style="font-size:12px;color:var(--text2);margin:-6px 0 12px;">此交易與其他交易共用同一張刮板，請至「商品管理→修改商品」統一調整歸屬。</div>
     <div class="field-group"><label class="field-label">備註</label><input type="text" id="edit-tx-note" placeholder="修改原因..."></div>
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" onclick="deleteTx()">🗑️ 刪除此筆</button>
@@ -1174,7 +1191,7 @@ async function initApp() {
   populateReportMonths();
   setupRealtimeListeners();
   setupExpenseListener();
-  if(isBoss){ renderTransferList(); setupPayoutsListener(); }
+  if(isBoss){ renderTransferList(); setupPayoutsListener(); checkRentShortfalls(); }
   // 支出日期預設今天
   setTimeout(()=>{
     const edEl=document.getElementById('expense-date');
@@ -1239,7 +1256,7 @@ window.switchPage = function(page, el) {
   el.classList.add('active');
   if(page==='dashboard') renderDashboard();
   if(page==='report') { populateReportMonths(); renderSettlementBoard(); }
-  if(page==='boss' && isBoss) renderPayoutBoard();
+  if(page==='boss' && isBoss) { checkRentShortfalls(); renderPayoutBoard(); }
   if(page==='print') initPrintPage();
   if(page==='expense') { populateExpenseMonthFilter(); renderExpenseList(); renderExpenseSummary(); }
 };
@@ -1881,7 +1898,7 @@ function renderOwnersList() {
         <div>
           <div style="font-size:16px;font-weight:700;">${o.name}${isInactiveTab?' <span style="font-size:11px;color:var(--danger);">已退租</span>':''}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:4px;">手續費 ${o.feeRate}%・每月 ${o.settleDay} 號結帳${inactiveDate?' · 退租日：'+inactiveDate:''}</div>
-          <div style="font-size:12px;color:var(--text2);margin-top:2px;">🏠 租金合計 $${rentTotal.toLocaleString()}${storageFeeTotal?'　📦 倉儲費 $'+storageFeeTotal.toLocaleString():''}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;">🏠 租金合計 $${rentTotal.toLocaleString()}${storageFeeTotal?'　📦 倉儲費 $'+storageFeeTotal.toLocaleString():''}${(o.rentBalance>0)?'　<span style="color:var(--danger);">⚠️ 欠租 $'+o.rentBalance.toLocaleString()+'</span>':''}</div>
         </div>
         <div style="display:flex;gap:6px;">${btns}</div>
       </div>
@@ -1910,8 +1927,15 @@ function populateCellSelects() {
   const cellHtml = '<option value="">無格子</option>'
     + cells.map(c=>`<option value="${c.cellId}">${c.cellId}（${c.ownerName}）</option>`).join('')
     + (storeCellList.length ? storeCellList.map(c=>`<option value="${c.cellId}">${c.cellId}（店內）</option>`).join('') : '');
-  ['product-cell-id','lightning-cell-id'].forEach(id=>{
+  ['product-cell-id'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.innerHTML=cellHtml;
+  });
+  // 閃電登帳「格主刮板」、修改交易的「歸屬」都只能選格主的格子，絕不能混入店內格子，否則會找不到對應格主、永遠無法歸帳
+  const ownerCellHtml = '<option value="">請選擇格子</option>'
+    + cells.map(c=>`<option value="${c.cellId}">${c.cellId}（${c.ownerName}）</option>`).join('');
+  ['lightning-cell-id','edit-tx-cell-id'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) { const cur=el.value; el.innerHTML = ownerCellHtml; if(cur) el.value = cur; }
   });
   // 格主篩選下拉（商品管理 + 快速選品）
   const owners = Object.values(allOwners).filter(o=>!o.inactive); // 只顯示現有格主
@@ -2568,11 +2592,36 @@ window.openProductTxHistory = function(productId) {
   const typeLabel = p.type==='owner' ? ('🏪 格主 '+(p.cellId||'')+(owner?'・'+owner.name:'')) : '🎴 店內';
   const statusText = p.status==='completed'?'已完刮':p.status==='scrapped'?'已廢套':p.status==='offline'?'已下架':'上架中';
   document.getElementById('tx-history-title').textContent = '📋 交易紀錄：'+(p.name||'');
-  document.getElementById('tx-history-meta').textContent = `${p.barcode||''}　${typeLabel}　狀態：${statusText}`;
+  document.getElementById('tx-history-meta').innerHTML = `${p.barcode||''}　${typeLabel}　狀態：${statusText}${buildPayoutDiagnosis(p, owner)}`;
   document.getElementById('tx-history-search').value = '';
   renderTxHistoryList();
   openModal('modal-product-tx-history');
 };
+
+// 判斷此格主刮板目前「撥款狀態」：已鎖定於哪次撥款、或屬於哪個結帳期間、或為何暫緩，方便老闆自行排查對帳問題
+function buildPayoutDiagnosis(p, owner) {
+  if(p.type!=='owner' || !p.completedAt) return '';
+  if(!owner) return '<div style="color:var(--danger);margin-top:4px;">⚠️ 找不到此格子對應的格主，這張刮板不會出現在任何格主帳務中，請確認格子編號是否正確（可用「修改商品」調整歸屬）</div>';
+  if(p.payoutId) {
+    const payout = allPayouts.find(po=>po.id===p.payoutId);
+    return payout
+      ? `<div style="color:var(--owner);margin-top:4px;">✅ 已於 ${payout.settleYear}/${payout.settleMonth}/${payout.settleDay} 結帳日撥款鎖定，不會再出現在待撥款清單</div>`
+      : '<div style="color:var(--owner);margin-top:4px;">✅ 已撥款鎖定，不會再出現在待撥款清單</div>';
+  }
+  const boardTxs = allTxs.filter(tx=>tx.productId===p.id);
+  const hasPending = boardTxs.some(tx=>tx.paymentStatus==='pending');
+  if(hasPending) return '<div style="color:var(--warning);margin-top:4px;">⏳ 含待核帳轉帳，確認入帳前暫緩計入格主帳務</div>';
+  const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
+  const {year, month} = getPeriodKeyForDate(ct, owner.settleDay);
+  return `<div style="color:var(--text2);margin-top:4px;">📌 尚未撥款，屬於 <strong>${year}/${month}/${owner.settleDay}</strong> 結帳日期間，請至「老闆專區→格主撥款紀錄」查看</div>`;
+}
+
+function getPeriodKeyForDate(date, day) {
+  let month = date.getDate() < day ? date.getMonth()+1 : date.getMonth()+2;
+  let year = date.getFullYear();
+  if(month>12){ month-=12; year++; }
+  return {year, month};
+}
 
 window.renderTxHistoryList = function() {
   if(!txHistoryProductId) return;
@@ -2623,6 +2672,11 @@ window.renderTxHistoryList = function() {
 };
 
 // ===== EDIT / DELETE TX =====
+window.onEditTxTypeChange = function() {
+  const type = document.getElementById('edit-tx-type').value;
+  document.getElementById('edit-tx-cell-id').classList.toggle('hidden', type!=='owner');
+};
+
 window.openEditTx = function(txId) {
   const tx=allTxs.find(t=>t.id===txId); if(!tx) return;
   document.getElementById('editing-tx-id').value=txId;
@@ -2630,6 +2684,16 @@ window.openEditTx = function(txId) {
   document.getElementById('edit-tx-amount').value=tx.amount||0;
   document.getElementById('edit-tx-payment').value=tx.paymentMethod||'cash';
   document.getElementById('edit-tx-note').value=tx.note||'';
+
+  // 這張刮板若還有其他交易共用（正常掃描累積多筆），歸屬只能統一在商品管理修改，避免同一張商品的交易歸屬各自不同
+  const shareCount = tx.productId ? allTxs.filter(t=>t.productId===tx.productId).length : 1;
+  const canEditOwnership = shareCount<=1;
+  document.getElementById('edit-tx-ownership-group').classList.toggle('hidden', !canEditOwnership);
+  document.getElementById('edit-tx-ownership-locked').classList.toggle('hidden', canEditOwnership);
+  document.getElementById('edit-tx-type').value = tx.productType==='owner' ? 'owner' : 'store';
+  document.getElementById('edit-tx-cell-id').value = tx.cellId||'';
+  onEditTxTypeChange();
+
   openModal('modal-edit-tx');
 };
 
@@ -2642,6 +2706,21 @@ window.saveEditTx = async function() {
 
   // 找出原始交易
   const oldTx = allTxs.find(t=>t.id===txId);
+
+  // 歸屬變更（僅限沒有跟其他交易共用同一張刮板的情況）
+  const ownershipEditable = !document.getElementById('edit-tx-ownership-group').classList.contains('hidden');
+  let newProductType = oldTx?.productType||'store', newCellId = oldTx?.cellId||null, newOwnerId = oldTx?.ownerId||null;
+  if(ownershipEditable) {
+    const selType = document.getElementById('edit-tx-type').value;
+    if(selType==='owner') {
+      const selCellId = document.getElementById('edit-tx-cell-id').value;
+      const selOwner = selCellId ? getOwnerByCell(selCellId) : null;
+      if(!selCellId||!selOwner){ showToast('⚠️ 請選擇正確的格主格子'); return; }
+      newProductType='owner'; newCellId=selCellId; newOwnerId=selOwner.id;
+    } else {
+      newProductType='store'; newCellId=null; newOwnerId=null;
+    }
+  }
 
   // 若原本是轉帳待核帳，現在改成現金 → 跳出確認
   let newPaymentStatus = oldTx?.paymentStatus || 'confirmed';
@@ -2664,16 +2743,16 @@ window.saveEditTx = async function() {
       } else if(newPaymentStatus==='confirmed') {
         newRevenue = newRevenue + amount; // 原本pending，現在確認
       }
-      await updateDoc(doc(db,'products',oldTx.productId), {
-        drawnCount: newDrawn,
-        totalRevenue: newRevenue
-      });
+      const prodUpdate = {drawnCount: newDrawn, totalRevenue: newRevenue};
+      if(ownershipEditable) { prodUpdate.type=newProductType; prodUpdate.cellId=newCellId; prodUpdate.ownerId=newOwnerId; }
+      await updateDoc(doc(db,'products',oldTx.productId), prodUpdate);
     }
   }
 
   await updateDoc(doc(db,'transactions',txId),{
     qty, amount, paymentMethod: payment,
     paymentStatus: newPaymentStatus,
+    productType:newProductType, cellId:newCellId, ownerId:newOwnerId,
     note, editedBy: currentUser.email, editedAt: serverTimestamp()
   });
   closeModal('modal-edit-tx');
@@ -3099,6 +3178,7 @@ window.submitLightning = async function() {
     if(!price||!draws){showToast('請填寫單價與刮數');return;}
     const ownerNote = document.getElementById('lightning-owner-note').value.trim();
     const owner = getOwnerByCell(cellId);
+    if(!owner){ showToast('⚠️ 找不到此格子對應的格主，請確認格子編號是否正確'); return; }
     const prodRef = await addDoc(collection(db,'products'),{
       barcode:'LIGHTNING-'+Date.now(), name:'閃電登帳 '+now.toLocaleDateString('zh-TW'),
       type:'owner', cellId, ownerId:owner?owner.id:null,
@@ -3195,7 +3275,7 @@ window.downloadReport = async function() {
   let ownerPayoutTotal = 0;
   const seenS=new Set();
   Object.values(allProducts).filter(p=>{
-    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     return ct>=start&&ct<end&&(p.status==='completed'||p.status==='scrapped');
   }).forEach(prod=>{
@@ -3229,7 +3309,7 @@ window.downloadReport = async function() {
 
   // ===== 格主應撥款 =====
   const completedProds=Object.values(allProducts).filter(p=>{
-    if(!p.completedAt||p.deleted||p.type!=='owner') return false;
+    if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct=p.completedAt.toDate?p.completedAt.toDate():new Date(p.completedAt);
     return ct>=start&&ct<end;
   });
@@ -3888,6 +3968,7 @@ function setupPayoutsListener() {
     allPayouts = [];
     snap.forEach(d => allPayouts.push({id:d.id,...d.data()}));
     if(document.getElementById('page-boss')?.classList.contains('active')) renderPayoutBoard();
+    renderRentReminders();
   });
 }
 
@@ -3962,6 +4043,109 @@ function ownerRentAndStorage(owner) {
   return {rentAmount, storageFeeAmount};
 }
 
+// ===== 欠租結轉 + 連續零撥款催繳 =====
+// 取得「現在」所在的、尚未結束的結帳期別（year/month 對應 getPayoutPeriod 的 selYear/selMonth）
+function getCurrentPayoutPeriodKey(day) {
+  return getPeriodKeyForDate(new Date(), day);
+}
+
+// 逐期檢查單一格主：已結束但未撥款的期別，若實拿為負則記為欠租並累計連續次數；
+// 只要該期可撥款金額≥0（老闆還沒按已撥款），就停在那期，不自動處理，留給老闆手動撥款
+async function checkOwnerRentShortfall(owner) {
+  if(owner.inactive || !(owner.cells||[]).length) return;
+  const day = owner.settleDay;
+  const currentKey = getCurrentPayoutPeriodKey(day);
+  if(!owner.rentCheckedPeriod) {
+    // 第一次追蹤，從現在的期別開始，不回溯補算歷史欠租
+    await updateDoc(doc(db,'owners',owner.id), {rentCheckedPeriod:{year:currentKey.year, month:currentKey.month}});
+    owner.rentCheckedPeriod = {year:currentKey.year, month:currentKey.month};
+    return;
+  }
+  let {year, month} = owner.rentCheckedPeriod;
+  let guard = 0;
+  while(guard++<24) {
+    let ny=year, nm=month+1; if(nm>12){nm=1;ny++;}
+    if(ny>currentKey.year || (ny===currentKey.year && nm>=currentKey.month)) break; // 這期還沒結束，停止
+    const paid = allPayouts.some(p=>p.ownerId===owner.id && p.settleYear===ny && p.settleMonth===nm && p.settleDay===day);
+    if(paid) { year=ny; month=nm; continue; } // 已撥款，往下一期檢查
+    const {periodStart, periodEnd} = getPayoutPeriod(day, ny, nm);
+    const {grossAmount} = calcOwnerGrossForPeriod(owner.id, periodStart, periodEnd);
+    const {rentAmount, storageFeeAmount} = ownerRentAndStorage(owner);
+    const net = grossAmount - rentAmount - storageFeeAmount - (owner.rentBalance||0);
+    if(net>=0) break; // 有可撥款金額但老闆還沒按，先停在這期，等老闆手動處理
+    // 倒欠，記錄（用固定 doc id 確保不會重複結算同一期）
+    const shortfallId = `${owner.id}_${ny}_${nm}_${day}`;
+    const shortfallRef = doc(db,'rentShortfalls',shortfallId);
+    const existing = await getDoc(shortfallRef);
+    if(!existing.exists()) {
+      await setDoc(shortfallRef, {
+        ownerId:owner.id, ownerName:owner.name, year:ny, month:nm, day,
+        shortAmount: Math.abs(net), createdAt: serverTimestamp()
+      });
+    }
+    const newBalance = Math.abs(net);
+    const newStreak = (owner.rentShortfallStreak||0)+1;
+    await updateDoc(doc(db,'owners',owner.id), {
+      rentBalance:newBalance, rentShortfallStreak:newStreak,
+      rentCheckedPeriod:{year:ny, month:nm}
+    });
+    owner.rentBalance = newBalance; owner.rentShortfallStreak = newStreak;
+    year=ny; month=nm;
+  }
+}
+
+async function checkRentShortfalls() {
+  if(!isBoss) return;
+  const owners = Object.values(allOwners).filter(o=>!o.inactive && (o.cells||[]).length);
+  for(const owner of owners) {
+    try { await checkOwnerRentShortfall(owner); } catch(e) { console.error('租金檢查失敗', owner.name, e); }
+  }
+  renderRentReminders();
+}
+
+window.renderRentReminders = function() {
+  const card = document.getElementById('rent-reminder-card');
+  const list = document.getElementById('rent-reminder-list');
+  if(!card||!list) return;
+  const flagged = Object.values(allOwners).filter(o=>!o.inactive && (o.rentShortfallStreak||0)>=2);
+  if(flagged.length===0) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  list.innerHTML = flagged.map(o=>`
+    <div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div>
+          <div style="font-weight:700;font-size:15px;">${o.name}</div>
+          <div style="font-size:12px;color:var(--danger);margin-top:2px;">⚠️ 已連續 ${o.rentShortfallStreak} 期租金未能扣抵，請通知到店繳納</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;">目前累積欠租 $${(o.rentBalance||0).toLocaleString()}</div>
+        </div>
+        <button class="btn btn-success btn-sm" style="flex-shrink:0;" data-collect-rent-owner="${o.id}">💰 登記已收租金</button>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('[data-collect-rent-owner]').forEach(btn=>{
+    btn.addEventListener('click', ()=>registerRentCollected(btn.dataset.collectRentOwner));
+  });
+};
+
+window.registerRentCollected = async function(ownerId) {
+  const owner = allOwners[ownerId]; if(!owner) return;
+  const amount = owner.rentBalance||0;
+  if(amount<=0){ showToast('此格主目前無欠租金額'); return; }
+  if(!confirm(`確定「${owner.name}」已到店繳納欠租 $${amount.toLocaleString()}？\n將計入今日收入，並清除欠租與催繳提示。`)) return;
+  await addDoc(collection(db,'transactions'),{
+    productId:null, productName:'格主現場繳納欠租',
+    productType:'store', cellId:null, ownerId,
+    qty:1, amount, paymentMethod:'cash', paymentStatus:'confirmed',
+    note:`${owner.name} 現場補繳累積欠租`,
+    batchCompleted:true, finalAmount:amount,
+    createdAt:serverTimestamp(), createdBy:currentUser.uid,
+    createdByEmail:currentUser.email, isPayoutDeduction:true
+  });
+  await updateDoc(doc(db,'owners',ownerId), {rentBalance:0, rentShortfallStreak:0});
+  showToast('✅ 已登記收租，欠租已清除');
+  renderRentReminders();
+  if(document.getElementById('page-boss')?.classList.contains('active')) renderPayoutBoard();
+};
+
 window.renderPayoutBoard = function() {
   const el = document.getElementById('payout-board'); if(!el) return;
   populatePayoutMonthSelectors();
@@ -3978,13 +4162,15 @@ window.renderPayoutBoard = function() {
     el.innerHTML += owners.map(owner=>{
       const {grossAmount, hasPendingAny} = calcOwnerGrossForPeriod(owner.id, periodStart, periodEnd);
       const {rentAmount, storageFeeAmount} = ownerRentAndStorage(owner);
-      const net = grossAmount - rentAmount - storageFeeAmount;
+      const carriedBalance = owner.rentBalance||0;
+      const totalDeduction = rentAmount + storageFeeAmount + carriedBalance;
+      const net = grossAmount - totalDeduction;
       return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
           <div>
             <div style="font-weight:700;font-size:15px;">${owner.name}</div>
             <div style="font-size:12px;color:var(--text2);">格子：${(owner.cells||[]).join('、')}</div>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px;">刮板可撥款 $${grossAmount.toLocaleString()}　－　租金 $${rentAmount.toLocaleString()}${storageFeeAmount?'　－　倉儲費 $'+storageFeeAmount.toLocaleString():''}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px;">刮板可撥款 $${grossAmount.toLocaleString()}　－　租金 $${rentAmount.toLocaleString()}${storageFeeAmount?'　－　倉儲費 $'+storageFeeAmount.toLocaleString():''}${carriedBalance?'　－　上期結轉欠租 $'+carriedBalance.toLocaleString():''}</div>
             ${hasPendingAny?'<div style="font-size:11px;color:var(--warning);margin-top:2px;">部分刮板含待核帳，暫緩計入</div>':''}
           </div>
           <div style="text-align:right;flex-shrink:0;">
@@ -4025,27 +4211,28 @@ window.markOwnerPaid = async function(ownerId, day, selYear, selMonth) {
   const {periodStart, periodEnd, settleDateLabel} = getPayoutPeriod(day, selYear, selMonth);
   const {grossAmount, prodIds} = calcOwnerGrossForPeriod(ownerId, periodStart, periodEnd);
   const {rentAmount, storageFeeAmount} = ownerRentAndStorage(owner);
-  const netAmount = grossAmount - rentAmount - storageFeeAmount;
+  const carriedBalance = owner.rentBalance||0;
+  const netAmount = grossAmount - rentAmount - storageFeeAmount - carriedBalance;
   if(netAmount<=0){ showToast('本期無可撥款金額'); return; }
-  if(!confirm(`確定要標記「${owner.name}」${settleDateLabel}已撥款 $${netAmount.toLocaleString()}？\n租金＋倉儲費 $${(rentAmount+storageFeeAmount).toLocaleString()} 將自動記入今日收入，相關刮板將鎖定不再重複計算。`)) return;
+  if(!confirm(`確定要標記「${owner.name}」${settleDateLabel}已撥款 $${netAmount.toLocaleString()}？\n租金＋倉儲費${carriedBalance?'＋上期結轉欠租':''} 共 $${(rentAmount+storageFeeAmount+carriedBalance).toLocaleString()} 將自動記入今日收入，相關刮板將鎖定不再重複計算。`)) return;
 
   const payoutRef = await addDoc(collection(db,'payouts'), {
     ownerId, ownerName: owner.name,
     settleYear:selYear, settleMonth:selMonth, settleDay:day,
-    grossAmount, rentAmount, storageFeeAmount, netAmount,
+    grossAmount, rentAmount, storageFeeAmount, carriedBalance, netAmount,
     productIds: prodIds,
     createdAt: serverTimestamp(), createdBy: currentUser.uid, createdByEmail: currentUser.email
   });
   // 鎖定相關刮板批次，避免報表/待撥款重複計算
   await Promise.all(prodIds.map(pid=>updateDoc(doc(db,'products',pid),{payoutId:payoutRef.id})));
-  // 租金＋倉儲費自動記為今日收入
-  const deduction = rentAmount+storageFeeAmount;
+  // 租金＋倉儲費＋結轉欠租，自動記為今日收入；本期已還清，欠租與連續次數歸零
+  const deduction = rentAmount+storageFeeAmount+carriedBalance;
   if(deduction>0) {
     await addDoc(collection(db,'transactions'),{
       productId:null, productName:'格主撥款扣款',
       productType:'store', cellId:null, ownerId,
       qty:1, amount:deduction, paymentMethod:'cash', paymentStatus:'confirmed',
-      note:`${owner.name} ${settleDateLabel} 撥款扣款：租金$${rentAmount.toLocaleString()}${storageFeeAmount?'＋倉儲費$'+storageFeeAmount.toLocaleString():''}`,
+      note:`${owner.name} ${settleDateLabel} 撥款扣款：租金$${rentAmount.toLocaleString()}${storageFeeAmount?'＋倉儲費$'+storageFeeAmount.toLocaleString():''}${carriedBalance?'＋結轉欠租$'+carriedBalance.toLocaleString():''}`,
       batchCompleted:true, finalAmount:deduction,
       createdAt:serverTimestamp(), createdBy:currentUser.uid,
       createdByEmail:currentUser.email, isPayoutDeduction:true, payoutId:payoutRef.id
@@ -4056,11 +4243,14 @@ window.markOwnerPaid = async function(ownerId, day, selYear, selMonth) {
     const todayStr = new Date().toISOString().split('T')[0];
     await addDoc(collection(db,'expenses'),{
       amount: netAmount, category:'ownerFee', item:`${owner.name} ${settleDateLabel} 撥款`,
-      note:`格主撥款：刮板毛額$${grossAmount.toLocaleString()} － 租金$${rentAmount.toLocaleString()}${storageFeeAmount?'－倉儲費$'+storageFeeAmount.toLocaleString():''}`,
+      note:`格主撥款：刮板毛額$${grossAmount.toLocaleString()} － 租金$${rentAmount.toLocaleString()}${storageFeeAmount?'－倉儲費$'+storageFeeAmount.toLocaleString():''}${carriedBalance?'－結轉欠租$'+carriedBalance.toLocaleString():''}`,
       expenseDate: todayStr,
       createdAt: serverTimestamp(), createdBy: currentUser.uid, createdByEmail: currentUser.email,
       isPayoutExpense:true, payoutId: payoutRef.id
     });
+  }
+  if(carriedBalance>0) {
+    await updateDoc(doc(db,'owners',ownerId), {rentBalance:0, rentShortfallStreak:0});
   }
   showToast('✅ 已標記撥款完成');
   renderPayoutBoard();
