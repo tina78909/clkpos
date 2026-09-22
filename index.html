@@ -897,6 +897,14 @@ select option{background:var(--surface2);}
     <div class="modal-header"><div class="modal-title">🗑️ 廢套確認</div><button class="modal-close" onclick="closeModal('modal-scrap')">✕</button></div>
     <div class="alert alert-danger">⚠️ 廢套後將立即觸發結算，廢套前累積金額將列入下一結算日</div>
     <div id="scrap-info" class="alert alert-info mt-8"></div>
+    <div class="field-group mt-8">
+      <label class="field-label">廢套日期 <span style="color:var(--text3);font-size:11px;">（若該套其實早就該結束，可改成實際那天，確保歸屬與結帳期別正確）</span></label>
+      <input type="date" id="scrap-date" style="width:100%;">
+    </div>
+    <div class="field-group hidden" id="scrap-owner-group">
+      <label class="field-label">歸屬格主 <span style="color:var(--text3);font-size:11px;">（若格子已轉給新格主，可改回原本的格主，避免金額算給新格主）</span></label>
+      <select id="scrap-owner-select" style="width:100%;"></select>
+    </div>
     <div class="field-group mt-8"><label class="field-label">廢套原因</label><input type="text" id="scrap-reason" placeholder="商品長期滯銷..."></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-scrap')">取消</button>
@@ -1359,7 +1367,7 @@ async function renderDashboard() {
     if(hasPending) return; // 有待核帳暫緩
     settledProdsSet.add(prod.id);
     const total = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const owner = getOwnerByCell(prod.cellId);
+    const owner = resolveProductOwner(prod);
     const fee   = owner ? owner.feeRate/100 : 0.1;
     storeRevenue += total*fee;
   });
@@ -1415,7 +1423,7 @@ window.openStoreRevenueDetail = function() {
     if(boardTxs.some(tx=>tx.paymentStatus==='pending')) return; // 有待核帳暫緩
     settledProdsSet.add(prod.id);
     const total = boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const owner = getOwnerByCell(prod.cellId);
+    const owner = resolveProductOwner(prod);
     const fee   = owner ? owner.feeRate/100 : 0.1;
     feeItems.push({prod, owner, feeAmount: total*fee, ct: getLastTxDate(prod.id)||(prod.completedAt?.toDate?prod.completedAt.toDate():new Date(prod.completedAt))});
   });
@@ -1636,6 +1644,12 @@ function guessCellFromBarcode(barcode) {
 
 function getOwnerByCell(cellId) {
   return Object.values(allOwners).find(o=>(o.cells||[]).includes(cellId)) || null;
+}
+// 商品的格主歸屬：一般情況用格子目前的格主反查；但如果曾在廢套時手動指定過歸屬（格子後來轉給別的格主），
+// 就要信任當初指定的格主，不能再用「格子現在的格主」重算，否則金額會被算給新格主
+function resolveProductOwner(p) {
+  if(p.ownerOverride && p.ownerId) return allOwners[p.ownerId] || null;
+  return getOwnerByCell(p.cellId);
 }
 function getAllCells() {
   // 回傳 [{cellId, ownerId, ownerName}]
@@ -2588,7 +2602,7 @@ let txHistoryProductId = null;
 window.openProductTxHistory = function(productId) {
   const p = allProducts[productId]; if(!p) return;
   txHistoryProductId = productId;
-  const owner = p.cellId ? getOwnerByCell(p.cellId) : null;
+  const owner = p.cellId ? resolveProductOwner(p) : null;
   const typeLabel = p.type==='owner' ? ('🏪 格主 '+(p.cellId||'')+(owner?'・'+owner.name:'')) : '🎴 店內';
   const statusText = p.status==='completed'?'已完刮':p.status==='scrapped'?'已廢套':p.status==='offline'?'已下架':'上架中';
   document.getElementById('tx-history-title').textContent = '📋 交易紀錄：'+(p.name||'');
@@ -2952,9 +2966,18 @@ window.openProductActionModal = async function(productId, action) {
     const feeInfo = owner
       ? '格主可得：<strong>$'+Math.round(confirmedAmt*(1-fee)).toLocaleString()+'</strong>（手續費 '+Math.round(fee*100)+'% = $'+Math.round(confirmedAmt*fee).toLocaleString()+'）'
       : '';
+    const todayStr = new Date().toISOString().split('T')[0];
+    const ownerOverrideHtml = p.type==='owner'
+      ? `<div class="field-group mt-8">
+          <label class="field-label">歸屬格主 <span style="color:var(--text3);font-size:11px;">（若格子已轉給新格主，可改回原本的格主，避免金額算給新格主）</span></label>
+          <select id="paction-scrap-owner-select" style="width:100%;">${Object.values(allOwners).map(o=>`<option value="${o.id}" ${owner&&o.id===owner.id?'selected':''}>${o.name}${o.inactive?'（已退租）':''}</option>`).join('')}</select>
+        </div>`
+      : '';
     document.getElementById('product-action-body').innerHTML =
       '<div class="alert alert-danger">廢套後立即觸發結算，金額列入下一結算日</div>'
-      +(confirmedAmt>0?'<div class="alert alert-info mt-8">已確認入帳：<strong>$'+confirmedAmt.toLocaleString()+'</strong><br>'+feeInfo+'</div>':'');
+      +(confirmedAmt>0?'<div class="alert alert-info mt-8">已確認入帳：<strong>$'+confirmedAmt.toLocaleString()+'</strong><br>'+feeInfo+'</div>':'')
+      +'<div class="field-group mt-8"><label class="field-label">廢套日期 <span style="color:var(--text3);font-size:11px;">（若該套其實早就該結束，可改成實際那天，確保歸屬與結帳期別正確）</span></label><input type="date" id="paction-scrap-date" style="width:100%;" value="'+todayStr+'"></div>'
+      +ownerOverrideHtml;
     reasonGroup.style.display='';
     document.getElementById('product-action-reason-label').textContent='廢套原因';
     document.getElementById('product-action-reason').placeholder='商品長期滯銷...';
@@ -3007,9 +3030,27 @@ window.execProductAction = async function(productId, action) {
     showToast('🗑️ 商品已隱藏，帳務紀錄保留');
   } else { // scrap
     const confirmedAmt = allTxs.filter(tx=>tx.productId===productId&&tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    await updateDoc(doc(db,'products',productId),{status:'scrapped',completedAt:serverTimestamp(),finalAmount:confirmedAmt,discountReason:'[廢套] '+reason});
+    const dateVal = document.getElementById('paction-scrap-date')?.value;
+    const todayStr = new Date().toISOString().split('T')[0];
+    let completedAt;
+    if(dateVal && dateVal!==todayStr) {
+      const [sy,sm,sd] = dateVal.split('-').map(Number);
+      completedAt = Timestamp.fromDate(new Date(sy,sm-1,sd,12,0,0));
+    } else {
+      completedAt = serverTimestamp();
+    }
+    const updateData = {status:'scrapped', completedAt, finalAmount:confirmedAmt, discountReason:'[廢套] '+reason};
+    if(p.type==='owner') {
+      const selectedOwnerId = document.getElementById('paction-scrap-owner-select')?.value;
+      const autoOwner = getOwnerByCell(p.cellId);
+      if(selectedOwnerId && selectedOwnerId!==(autoOwner?.id||'')) {
+        updateData.ownerId = selectedOwnerId;
+        updateData.ownerOverride = true;
+      }
+    }
+    await updateDoc(doc(db,'products',productId), updateData);
     const batch = allTxs.filter(tx=>tx.productId===productId&&tx.paymentStatus==='confirmed');
-    await Promise.all(batch.map(tx=>updateDoc(doc(db,'transactions',tx.id),{batchCompleted:true,finalAmount:confirmedAmt,completedAt:serverTimestamp()})));
+    await Promise.all(batch.map(tx=>updateDoc(doc(db,'transactions',tx.id),{batchCompleted:true,finalAmount:confirmedAmt,completedAt})));
     showToast('🗑️ 廢套完成，已觸發結算');
     if(currentProduct&&currentProduct.id===productId){currentProduct=null;document.getElementById('product-found-section').classList.add('hidden');}
   }
@@ -3026,15 +3067,45 @@ window.openScrapModal = async function() {
     ?`目前已確認入帳：<strong>$${confirmedAmt.toLocaleString()}</strong><br>扣除手續費(${(fee*100).toFixed(0)}%)後，格主可得：<strong>$${ownerGet.toLocaleString()}</strong>，將列入下一結算日`
     :`店內商品廢套，目前已收：<strong>$${confirmedAmt.toLocaleString()}</strong>`;
   document.getElementById('scrap-reason').value='';
+  document.getElementById('scrap-date').value = new Date().toISOString().split('T')[0];
+  const ownerGroup = document.getElementById('scrap-owner-group');
+  if(currentProduct.type==='owner') {
+    ownerGroup.classList.remove('hidden');
+    const sel = document.getElementById('scrap-owner-select');
+    sel.innerHTML = Object.values(allOwners).map(o=>`<option value="${o.id}">${o.name}${o.inactive?'（已退租）':''}</option>`).join('');
+    sel.value = owner ? owner.id : '';
+  } else {
+    ownerGroup.classList.add('hidden');
+  }
   openModal('modal-scrap');
 };
 window.confirmScrap = async function() {
   if(!currentProduct) return;
   const reason=document.getElementById('scrap-reason').value.trim();
   const finalAmount=allTxs.filter(tx=>tx.productId===currentProduct.id&&tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-  await updateDoc(doc(db,'products',currentProduct.id),{status:'scrapped',completedAt:serverTimestamp(),finalAmount,discountReason:`[廢套] ${reason}`});
+
+  const dateVal = document.getElementById('scrap-date').value;
+  const todayStr = new Date().toISOString().split('T')[0];
+  let completedAt;
+  if(dateVal && dateVal!==todayStr) {
+    const [sy,sm,sd] = dateVal.split('-').map(Number);
+    completedAt = Timestamp.fromDate(new Date(sy,sm-1,sd,12,0,0));
+  } else {
+    completedAt = serverTimestamp();
+  }
+
+  const updateData = {status:'scrapped', completedAt, finalAmount, discountReason:`[廢套] ${reason}`};
+  if(currentProduct.type==='owner') {
+    const selectedOwnerId = document.getElementById('scrap-owner-select').value;
+    const autoOwner = getOwnerByCell(currentProduct.cellId);
+    if(selectedOwnerId && selectedOwnerId!==(autoOwner?.id||'')) {
+      updateData.ownerId = selectedOwnerId;
+      updateData.ownerOverride = true;
+    }
+  }
+  await updateDoc(doc(db,'products',currentProduct.id), updateData);
   const batch=allTxs.filter(tx=>tx.productId===currentProduct.id&&tx.paymentStatus==='confirmed');
-  await Promise.all(batch.map(tx=>updateDoc(doc(db,'transactions',tx.id),{batchCompleted:true,finalAmount,completedAt:serverTimestamp()})));
+  await Promise.all(batch.map(tx=>updateDoc(doc(db,'transactions',tx.id),{batchCompleted:true,finalAmount,completedAt})));
   closeModal('modal-scrap'); showToast('🗑️ 廢套完成，已觸發結算');
   currentProduct=null;
   document.getElementById('product-found-section').classList.add('hidden');
@@ -3285,7 +3356,7 @@ window.downloadReport = async function() {
     if(hasPending) return; // 有待核帳就暫緩，整張不撥款
     seenS.add(prod.id);
     const confirmedTotal=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
-    const o=getOwnerByCell(prod.cellId);
+    const o=resolveProductOwner(prod);
     const fee=(o?.feeRate||10)/100;
     ownerPayoutTotal+=Math.round(confirmedTotal*(1-fee));
   });
@@ -3315,7 +3386,7 @@ window.downloadReport = async function() {
   });
   const ownerBoardMap={};
   completedProds.forEach(prod=>{
-    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const owner=resolveProductOwner(prod); if(!owner) return;
     const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
     const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
     const confirmed=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
@@ -3791,12 +3862,12 @@ window.downloadSettlementReport = async function(day, selYear, selMonth) {
     if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
-    const owner=getOwnerByCell(p.cellId);
+    const owner=resolveProductOwner(p);
     return owner&&owner.settleDay===day;
   });
   const ownerMap={};
   targetProds.forEach(prod=>{
-    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const owner=resolveProductOwner(prod); if(!owner) return;
     const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
     const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
     const confirmedAmt=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
@@ -4023,7 +4094,7 @@ function calcOwnerGrossForPeriod(ownerId, periodStart, periodEnd) {
   let grossAmount=0, hasPendingAny=false; const prodIds=[];
   Object.values(allProducts).forEach(p=>{
     if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return;
-    const o=getOwnerByCell(p.cellId); if(!o||o.id!==ownerId) return;
+    const o=resolveProductOwner(p); if(!o||o.id!==ownerId) return;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return;
     const boardTxs=allTxs.filter(tx=>tx.productId===p.id);
@@ -4193,16 +4264,22 @@ window.renderPayoutBoard = function() {
     el.innerHTML += list.map(p=>{
       const dt = p.createdAt?.toDate?p.createdAt.toDate().toLocaleString('zh-TW'):'';
       return `<div style="background:var(--surface2);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
           <div>
             <div style="font-weight:700;font-size:15px;">${p.ownerName}</div>
-            <div style="font-size:12px;color:var(--text2);">刮板毛額 $${(p.grossAmount||0).toLocaleString()}　－　租金 $${(p.rentAmount||0).toLocaleString()}${p.storageFeeAmount?'　－　倉儲費 $'+p.storageFeeAmount.toLocaleString():''}</div>
+            <div style="font-size:12px;color:var(--text2);">刮板毛額 $${(p.grossAmount||0).toLocaleString()}　－　租金 $${(p.rentAmount||0).toLocaleString()}${p.storageFeeAmount?'　－　倉儲費 $'+p.storageFeeAmount.toLocaleString():''}${p.carriedBalance?'　－　結轉欠租 $'+p.carriedBalance.toLocaleString():''}</div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px;">${dt}・${p.createdByEmail||''}</div>
           </div>
-          <div style="font-size:18px;font-weight:700;color:var(--owner);">$${(p.netAmount||0).toLocaleString()}</div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:18px;font-weight:700;color:var(--owner);">$${(p.netAmount||0).toLocaleString()}</div>
+            <button class="btn btn-ghost btn-xs" style="margin-top:6px;color:var(--danger);" data-undo-payout="${p.id}">↩️ 取消已撥款</button>
+          </div>
         </div>
       </div>`;
     }).join('');
+    el.querySelectorAll('[data-undo-payout]').forEach(btn=>{
+      btn.addEventListener('click', ()=>undoOwnerPayout(btn.dataset.undoPayout));
+    });
   }
 };
 
@@ -4254,6 +4331,45 @@ window.markOwnerPaid = async function(ownerId, day, selYear, selMonth) {
   }
   showToast('✅ 已標記撥款完成');
   renderPayoutBoard();
+};
+
+// 取消已撥款：刮板解鎖回到待撥款、刪除自動產生的租金收入與格主費用支出、還原結轉欠租
+window.undoOwnerPayout = async function(payoutId) {
+  const payout = allPayouts.find(p=>p.id===payoutId); if(!payout) return;
+  const owner = allOwners[payout.ownerId];
+  // 若這個格主之後還有更新期別的撥款紀錄，直接取消會讓後續期別的結轉欠租對不起來，先擋下來
+  const hasLaterPayout = allPayouts.some(p=>p.ownerId===payout.ownerId && p.id!==payout.id &&
+    (p.settleYear>payout.settleYear || (p.settleYear===payout.settleYear && p.settleMonth>payout.settleMonth)));
+  if(hasLaterPayout) {
+    showToast('⚠️ 此格主之後還有更新期別的撥款紀錄，無法直接取消，請聯繫工程師人工核對');
+    return;
+  }
+  if(!confirm(`確定要取消「${payout.ownerName}」${payout.settleYear}/${payout.settleMonth}/${payout.settleDay} 結帳日的已撥款紀錄？\n相關刮板將解鎖回到待撥款清單，自動產生的租金收入與格主費用支出也會一併刪除${payout.carriedBalance?'，並還原結轉欠租':''}。`)) return;
+
+  // 解鎖相關刮板，回到待撥款清單
+  await Promise.all((payout.productIds||[]).map(pid=>updateDoc(doc(db,'products',pid),{payoutId:null})));
+  // 刪除自動產生的租金收入交易
+  const deductionTxs = allTxs.filter(tx=>tx.isPayoutDeduction && tx.payoutId===payoutId);
+  await Promise.all(deductionTxs.map(tx=>deleteDoc(doc(db,'transactions',tx.id))));
+  // 刪除自動產生的格主費用支出
+  const payoutExpenses = allExpenses.filter(e=>e.isPayoutExpense && e.payoutId===payoutId);
+  await Promise.all(payoutExpenses.map(e=>deleteDoc(doc(db,'expenses',e.id))));
+  // 還原結轉欠租；若系統已核算到這一期之後，退回到這一期之前，讓系統下次重新核算
+  if(owner) {
+    const restoreData = {};
+    if(payout.carriedBalance>0) restoreData.rentBalance = payout.carriedBalance;
+    const checked = owner.rentCheckedPeriod;
+    if(checked && (checked.year>payout.settleYear || (checked.year===payout.settleYear && checked.month>=payout.settleMonth))) {
+      let py=payout.settleYear, pm=payout.settleMonth-1; if(pm<1){pm=12;py--;}
+      restoreData.rentCheckedPeriod = {year:py, month:pm};
+    }
+    if(Object.keys(restoreData).length) await updateDoc(doc(db,'owners',payout.ownerId), restoreData);
+  }
+  // 刪除撥款紀錄本身
+  await deleteDoc(doc(db,'payouts',payoutId));
+  showToast('✅ 已取消撥款，刮板已回到待撥款清單');
+  renderPayoutBoard();
+  checkRentShortfalls();
 };
 
 // ===== 結帳日總覽 =====
@@ -4313,7 +4429,7 @@ window.renderSettlementBoard = function() {
     if(!p.completedAt||p.deleted||p.type!=='owner'||p.payoutId) return false;
     const ct = getLastTxDate(p.id) || (p.completedAt?.toDate?p.completedAt.toDate():new Date(p.completedAt||0));
     if(ct<periodStart||ct>=periodEnd) return false;
-    const owner=getOwnerByCell(p.cellId);
+    const owner=resolveProductOwner(p);
     return owner&&owner.settleDay===day;
   });
   if(!targetProds.length){
@@ -4322,7 +4438,7 @@ window.renderSettlementBoard = function() {
   }
   const ownerMap={};
   targetProds.forEach(prod=>{
-    const owner=getOwnerByCell(prod.cellId); if(!owner) return;
+    const owner=resolveProductOwner(prod); if(!owner) return;
     const boardTxs=allTxs.filter(tx=>tx.productId===prod.id);
     const hasPending=boardTxs.some(tx=>tx.paymentStatus==='pending');
     const confirmedAmt=boardTxs.filter(tx=>tx.paymentStatus==='confirmed').reduce((s,tx)=>s+(tx.amount||0),0);
